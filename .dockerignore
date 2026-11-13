@@ -1,4 +1,6 @@
 **
+!.dockerignore
+!Dockerfile
 !global.json
 !Directory.Build.props
 !src/
@@ -10,3 +12,5 @@
 !src/Approval.Worker/*.cs
 !src/Approval.Worker/*.csproj
 !src/Approval.Worker/packages.lock.json
+**/bin/
+**/obj/

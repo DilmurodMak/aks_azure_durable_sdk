@@ -120,6 +120,12 @@ timeout_started="$SECONDS"
 wait_for "$timeout" Timeout
 timeout_seconds=$((SECONDS - timeout_started))
 client status --instance "$timeout" --history > "$evidence/$timeout.history.json"
+jq --exit-status '
+  def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  [.history[] | select(.eventType == "TimerCreated")][0] as $timer |
+  (($timer.fireAt | epoch) - ($timer.timestamp | epoch)) == 120 and
+  (.lastUpdatedAt | epoch) >= ($timer.fireAt | epoch)
+' "$evidence/$timeout.history.json" >/dev/null
 
 start "$stale" 2
 client decide --instance "$stale" --approver finance --version 2 --outcome Approve > "$evidence/$stale.decision.json"

@@ -6,8 +6,8 @@ COPY global.json Directory.Build.props ./
 COPY src/Approval.Contracts/Approval.Contracts.csproj src/Approval.Contracts/packages.lock.json src/Approval.Contracts/
 COPY src/Approval.Worker/Approval.Worker.csproj src/Approval.Worker/packages.lock.json src/Approval.Worker/
 RUN dotnet restore src/Approval.Worker/Approval.Worker.csproj --locked-mode --source "$NUGET_SOURCE"
-COPY src/Approval.Contracts/ src/Approval.Contracts/
-COPY src/Approval.Worker/ src/Approval.Worker/
+COPY src/Approval.Contracts/*.cs src/Approval.Contracts/
+COPY src/Approval.Worker/*.cs src/Approval.Worker/
 RUN dotnet publish src/Approval.Worker/Approval.Worker.csproj \
     --configuration Release --no-restore --output /publish /p:UseAppHost=false
 
