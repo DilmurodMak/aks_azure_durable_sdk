@@ -1,0 +1,12 @@
+**
+!global.json
+!Directory.Build.props
+!src/
+!src/Approval.Contracts/
+!src/Approval.Contracts/*.cs
+!src/Approval.Contracts/*.csproj
+!src/Approval.Contracts/packages.lock.json
+!src/Approval.Worker/
+!src/Approval.Worker/*.cs
+!src/Approval.Worker/*.csproj
+!src/Approval.Worker/packages.lock.json

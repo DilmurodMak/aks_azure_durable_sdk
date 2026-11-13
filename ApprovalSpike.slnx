@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Approval.Client/Approval.Client.csproj" />
+    <Project Path="src/Approval.Contracts/Approval.Contracts.csproj" />
+    <Project Path="src/Approval.Worker/Approval.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Approval.Tests/Approval.Tests.csproj" />
+  </Folder>
+</Solution>

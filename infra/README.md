@@ -222,7 +222,7 @@ or remove IP restrictions to bypass a propagation or connectivity issue.
 No worker pods are expected yet. Healthy nodes and a successful deployment
 are infrastructure checks, not a passed SDK approval test.
 
-## 7. Configure the later SDK worker deployment
+## 7. Deploy and test the SDK worker
 
 Use these fields from the deployment's `configuration` output:
 
@@ -247,10 +247,12 @@ and sending approval events. Do not assume the worker can submit client requests
 Image publishing/build permissions must also be available to the chosen build
 identity; AcrPull on the kubelet only authorizes pulling images.
 
-Next, adapt the official [Human Interaction SDK example][approval] into the
-worker image and validate approve, reject, timeout, and pod-replacement recovery.
-Its console-oriented worker/client need adaptation before unattended deployment;
-no such application changes are included here.
+The [Sunny Soda spike runbook](../spike/README.md) contains the worker/client,
+container build, Kubernetes deployment, and three acceptance runs: approval
+after pod replacement, timeout, and stale-version rejection.
+The AKS worker uses `Authentication=WorkloadIdentity`; the laptop client uses
+`Authentication=AzureCli`. Neither uses stored credentials or an implicit
+emulator fallback.
 
 ## 8. Planned Teams approval-card extension
 
