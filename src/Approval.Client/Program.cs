@@ -5,6 +5,8 @@ using Azure.Identity;
 using Grpc.Core;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
+using Microsoft.DurableTask;
+using Microsoft.DurableTask.Converters;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -26,6 +28,7 @@ try
     ClientCommand command = ClientCommand.Parse(args);
     SchedulerConnection connection = SchedulerConnection.FromEnvironment();
     ServiceCollection services = new();
+    services.AddSingleton<DataConverter>(new JsonDataConverter(ApprovalJson.CreateSerializerOptions()));
     services.AddLogging(logging => logging.AddConsole(options =>
     {
         options.LogToStandardErrorThreshold = LogLevel.Trace;

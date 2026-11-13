@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approval spike console</title>
+  <link rel="stylesheet" href="/console.css">
+  <script src="/console.js" defer></script>
+</head>
+<body>
+  <header><h1>Approval spike console <span id="environment">Connecting</span></h1>
+    <p>This page runs on your laptop. Use it to start approvals and click Approve or Reject.
+      The Scheduler dashboard below is a separate page for watching workflow execution.</p>
+    <p id="endpoint"></p><p class="warning">SPIKE ONLY: "Acting as" is simulated, not Entra authentication.
+      Keep this console on your laptop. Never publish or port-forward it.</p>
+    <a id="dashboard" target="_blank" rel="noopener noreferrer">Open Scheduler dashboard</a>
+    <a href="/openapi/v1.json" target="_blank" rel="noopener noreferrer">OpenAPI</a>
+  </header>
+  <main>
+    <section><h2>Start approval</h2>
+      <form id="start">
+        <label>Instance ID<input name="instanceId" id="instance" required></label>
+        <label>Plan<input name="planId" value="sunny-soda" required></label>
+        <label>Version<input name="version" value="3" type="number" min="1" required></label>
+        <label>Requester<input name="requester" value="requester" required></label>
+        <label>Assigned approver<input name="approver" value="finance" required></label>
+        <label>Timeout (minutes)<input name="timeoutMinutes" value="15" type="number" min="0.001" max="1440" step="any" required></label>
+        <label>Apply step delay (seconds)<input name="applyDecisionDelaySeconds" value="0" type="number" min="0" max="60" required></label>
+        <button type="submit">Start</button>
+      </form>
+    </section>
+    <section><h2>Waiting approvals</h2>
+      <label>Acting as (demo only)<select id="actor">
+        <option>finance</option><option>requester</option><option>someone-else</option>
+      </select></label>
+      <label>Decision version override (blank = plan version)<input id="decision-version" type="number" min="1"></label>
+      <button id="refresh" type="button">Refresh</button>
+      <p>Invalid actors, versions, or outcomes are refused by the workflow. It stays waiting until a valid decision or the original deadline.</p>
+      <table><thead><tr><th>Instance</th><th>Plan/version</th><th>Assigned approver</th><th>Actions</th></tr></thead><tbody id="approvals"></tbody></table>
+    </section>
+    <section><h2>Status and history</h2>
+      <form id="status"><label>Instance ID<input id="status-id" required></label>
+        <button type="submit">Get status + history</button></form>
+      <p id="message" role="status"></p><pre id="result"></pre>
+    </section>
+  </main>
+</body>
+</html>

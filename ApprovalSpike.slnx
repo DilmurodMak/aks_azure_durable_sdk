@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Approval.Client/Approval.Client.csproj" />
+    <Project Path="src/Approval.Console/Approval.Console.csproj" />
     <Project Path="src/Approval.Contracts/Approval.Contracts.csproj" />
     <Project Path="src/Approval.Worker/Approval.Worker.csproj" />
   </Folder>

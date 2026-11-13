@@ -131,9 +131,26 @@ jq --exit-status '
 
 start "$stale" 2
 client decide --instance "$stale" --approver finance --version 2 --outcome Approve > "$evidence/$stale.decision.json"
-wait_for "$stale" RejectedStaleVersion
+deadline=$((SECONDS+60))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  client status --instance "$stale" --history > "$evidence/$stale.refused.json"
+  if jq --exit-status '
+      .runtimeStatus == "Running" and .customStatus == "Waiting for Finance" and
+      any(.history[]; .eventType == "EventRaised" and .name == "Decision")
+    ' "$evidence/$stale.refused.json" >/dev/null; then break; fi
+  sleep 2
+done
+jq --exit-status '
+  .runtimeStatus == "Running" and .customStatus == "Waiting for Finance" and .result == null and
+  any(.history[]; .eventType == "EventRaised" and .name == "Decision") and
+  ([.history[] | select(.eventType == "TaskScheduled" and .name == "ApplyDecision")] | length == 0) and
+  ([.history[] | select(.eventType == "TimerCreated")] | length == 1)
+' "$evidence/$stale.refused.json" >/dev/null
+client decide --instance "$stale" --approver finance --version 3 --outcome Approve > "$evidence/$stale.valid-decision.json"
+wait_for "$stale" Approved
 client status --instance "$stale" --history > "$evidence/$stale.history.json"
-for instance in "$timeout" "$stale"; do
+jq --exit-status '.result.receipt == "sunny-soda:v3:approved"' "$evidence/$stale.history.json" >/dev/null
+for instance in "$timeout"; do
   jq --exit-status \
     '.result.receipt == null and ([.history[] | select(.eventType == "TaskScheduled" and .name == "ApplyDecision")] | length == 0)' \
     "$evidence/$instance.history.json" >/dev/null
@@ -154,8 +171,9 @@ jq --null-input \
   --argjson waitingSeconds "$waiting_seconds" --argjson replacementSeconds "$replacement_seconds" \
   --argjson resumeSeconds "$resume_seconds" --argjson timeoutSeconds "$timeout_seconds" \
   '{completedAt: $completedAt, instanceId: $instance, oldPod: $oldPod, newPod: $newPod, image: $image,
-    waitingSeconds: $waitingSeconds, replacementSeconds: $replacementSeconds,
+    waitingSeconds: $waitingSeconds, podReadySeconds: $replacementSeconds,
     resumeSeconds: $resumeSeconds, timeoutObservedSeconds: $timeoutSeconds,
     restartApproval: "Pass", timeout: "Pass", staleVersion: "Pass",
-    receipt: "sunny-soda:v3:approved", historyOrder: "Pass"}' > "$evidence/summary.json"
+    receipt: "sunny-soda:v3:approved", historyOrder: "Pass",
+    note: "Pod Ready is not Scheduler-connected; resumeSeconds measures real decision processing. Stale input is refused, stays waiting, then a valid approval completes."}' > "$evidence/summary.json"
 cat "$evidence/summary.json"

@@ -8,13 +8,14 @@ public sealed record ClientCommand(
     string InstanceId,
     ApprovalRequest? Request = null,
     Decision? Decision = null,
-    bool IncludeHistory = false)
+    bool IncludeHistory = false,
+    string Source = "cli")
 {
     public const string Usage = """
-        start  --instance ID --plan PLAN --version N --requester ID --approver ID [--timeout-minutes 15]
+        start  --instance ID --plan PLAN --version N --requester ID --approver ID [--timeout-minutes 15] [--apply-delay-seconds 0]
         decide --instance ID --approver ID --version N --outcome Approve|Reject
         status --instance ID [--history]
-        Only the exact outcome Approve approves. Other non-empty outcomes are rejected by the workflow.
+        Only exact Approve or Reject completes. Invalid decisions are refused and the workflow keeps waiting.
         """;
 
     public static ClientCommand Parse(string[] args)
@@ -52,7 +53,7 @@ public sealed record ClientCommand(
 
         string[] allowed = args[0] switch
         {
-            "start" => ["--instance", "--plan", "--version", "--requester", "--approver", "--timeout-minutes"],
+            "start" => ["--instance", "--plan", "--version", "--requester", "--approver", "--timeout-minutes", "--apply-delay-seconds"],
             "decide" => ["--instance", "--approver", "--version", "--outcome"],
             _ => ["--instance", "--history"]
         };
@@ -95,8 +96,14 @@ public sealed record ClientCommand(
             throw new ArgumentException("--timeout-minutes must be a number.");
         }
 
+        if (!int.TryParse(values.GetValueOrDefault("--apply-delay-seconds", "0"),
+            NumberStyles.None, CultureInfo.InvariantCulture, out int delay))
+        {
+            throw new ArgumentException("--apply-delay-seconds must be an integer from 0 to 60.");
+        }
+
         ApprovalRequest request = new(
-            Required(values, "--plan"), version, Required(values, "--requester"), approver, timeoutMinutes);
+            Required(values, "--plan"), version, Required(values, "--requester"), approver, timeoutMinutes, delay);
         request.Validate();
         return new ClientCommand("start", instanceId, request);
     }

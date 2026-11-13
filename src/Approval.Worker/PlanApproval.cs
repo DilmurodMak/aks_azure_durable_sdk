@@ -12,62 +12,80 @@ public sealed class PlanApproval : TaskOrchestrator<ApprovalRequest, ApprovalRes
         input.Validate();
         await context.CallActivityAsync<string>(nameof(RecordSubmission), input);
         context.SetCustomStatus(ApprovalNames.WaitingStatus);
+        ILogger logger = context.CreateReplaySafeLogger<PlanApproval>();
 
         using CancellationTokenSource cancellation = new();
-        Task<Decision> decisionTask = context.WaitForExternalEvent<Decision>(
-            ApprovalNames.DecisionEvent, cancellation.Token);
-        Task timer = context.CreateTimer(
-            context.CurrentUtcDateTime.AddMinutes(input.TimeoutMinutes), cancellation.Token);
+        DateTime deadline = context.CurrentUtcDateTime.AddMinutes(input.TimeoutMinutes);
+        Task timer = context.CreateTimer(deadline, cancellation.Token);
 
         ApprovalResult result;
-        if (await Task.WhenAny(decisionTask, timer) == timer)
+        while (true)
         {
-            await timer;
-            cancellation.Cancel();
-            result = new ApprovalResult("Timeout", input.Version, null);
-        }
-        else
-        {
-            cancellation.Cancel();
+            Task<Decision> decisionTask = context.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, cancellation.Token);
+            if (await Task.WhenAny(timer, decisionTask) == timer)
+            {
+                await timer;
+                cancellation.Cancel();
+                result = new ApprovalResult("Timeout", input.Version, null);
+                break;
+            }
+
             Decision decision = await decisionTask;
             string status = EvaluateDecision(input, decision);
+            if (status is not ("Approved" or "Rejected"))
+            {
+                logger.LogWarning(
+                    "Instance {InstanceId} refused decision: {Reason}; status {Status}; waiting until {Deadline}",
+                    context.InstanceId, status, ApprovalNames.WaitingStatus, deadline);
+                continue;
+            }
+
+            cancellation.Cancel();
             string? receipt = status == "Approved"
                 ? await context.CallActivityAsync<string>(
-                    nameof(ApplyDecision), $"{input.PlanId}:v{input.Version}:approved")
+                    nameof(ApplyDecision),
+                    new ApplyDecisionRequest(
+                        $"{input.PlanId}:v{input.Version}:approved", input.ApplyDecisionDelaySeconds))
                 : null;
             result = new ApprovalResult(status, input.Version, receipt);
+            break;
         }
 
         context.SetCustomStatus(result.Status);
-        context.CreateReplaySafeLogger<PlanApproval>()
-            .LogInformation("Instance {InstanceId} finished with {Status}, version {Version}, receipt {Receipt}",
-                context.InstanceId, result.Status, result.Version, result.Receipt);
+        logger.LogInformation("Instance {InstanceId} finished with {Status}, version {Version}, receipt {Receipt}",
+            context.InstanceId, result.Status, result.Version, result.Receipt);
         return result;
     }
 
-    public static string EvaluateDecision(ApprovalRequest request, Decision? decision)
+    private static string EvaluateDecision(ApprovalRequest request, Decision? decision)
     {
         if (decision is null || string.IsNullOrWhiteSpace(decision.Approver))
         {
-            return "Rejected";
+            return "RefusedMissingApprover";
         }
 
         if (string.Equals(decision.Approver, request.Requester, StringComparison.OrdinalIgnoreCase))
         {
-            return "RejectedSelfApproval";
+            return "RefusedSelfApproval";
         }
 
         if (!string.Equals(decision.Approver, request.Approver, StringComparison.OrdinalIgnoreCase))
         {
-            return "RejectedWrongApprover";
+            return "RefusedWrongApprover";
         }
 
         if (decision.Version != request.Version)
         {
-            return "RejectedStaleVersion";
+            return "RefusedStaleVersion";
         }
 
-        return decision.Outcome == "Approve" ? "Approved" : "Rejected";
+        return decision.Outcome switch
+        {
+            "Approve" => "Approved",
+            "Reject" => "Rejected",
+            _ => "RefusedInvalidOutcome",
+        };
     }
 }
 
@@ -83,12 +101,21 @@ public sealed class RecordSubmission(ILogger<RecordSubmission> logger)
     }
 }
 
-public sealed class ApplyDecision(ILogger<ApplyDecision> logger) : TaskActivity<string, string>
+public sealed class ApplyDecision(ILogger<ApplyDecision> logger)
+    : TaskActivity<ApplyDecisionRequest, string>
 {
-    public override Task<string> RunAsync(TaskActivityContext context, string input)
+    public override async Task<string> RunAsync(TaskActivityContext context, ApplyDecisionRequest input)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(input);
-        logger.LogInformation("ApplyDecision instance={InstanceId} receipt={Receipt}", context.InstanceId, input);
-        return Task.FromResult(input);
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.Receipt);
+        if (input.DelaySeconds is < 0 or > 60)
+        {
+            throw new ArgumentException("DelaySeconds must be between zero and 60.");
+        }
+
+        logger.LogInformation("ApplyDecision attempt instance={InstanceId} receipt={Receipt} delaySeconds={DelaySeconds}",
+            context.InstanceId, input.Receipt, input.DelaySeconds);
+        await Task.Delay(TimeSpan.FromSeconds(input.DelaySeconds));
+        return input.Receipt;
     }
 }

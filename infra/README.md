@@ -247,9 +247,11 @@ and sending approval events. Do not assume the worker can submit client requests
 Image publishing/build permissions must also be available to the chosen build
 identity; AcrPull on the kubelet only authorizes pulling images.
 
-The [Sunny Soda spike runbook](../spike/README.md) contains the worker/client,
-container build, Kubernetes deployment, and three acceptance runs: approval
-after pod replacement, timeout, and stale-version rejection.
+Continue with [worker image deployment](../src/README.md#deploy-the-worker-to-aks),
+then the [local and Azure demos](../spike/README.md). Acceptance runs cover
+approval after pod replacement, timeout, and a refused stale decision followed
+by valid approval. This is a green-deployment spike with one `PlanApproval`
+workflow and local task hub `approval-local`.
 The AKS worker uses `Authentication=WorkloadIdentity`; the laptop client uses
 `Authentication=AzureCli`. Neither uses stored credentials or an implicit
 emulator fallback.

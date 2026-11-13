@@ -1,215 +1,154 @@
 ---
-title: Sunny Soda approval spike
-description: Prove that one approval survives an AKS worker replacement, then test timeout and a stale plan version.
+title: Approval spike demo
+description: Use HTTP requests and dashboards to test the local emulator or the worker deployed to AKS.
 ms.date: 2026-11-13
 ms.topic: how-to
 ---
 
-## What we are proving
+## Before the demo
 
-Run a standalone .NET 10 Durable Task SDK worker on AKS with Azure Durable
-Task Scheduler. No Functions runtime, Teams, business database, or real
-Media Plan update is involved.
+Run all commands from the repository root. Install Docker, the .NET SDK in
+[global.json](../global.json), and `jq`; Azure also needs Azure CLI.
+Complete the [build steps](../src/README.md#build-and-test).
+If these services are already running, reuse them instead of starting duplicates.
+
+The same `PlanApproval` workflow runs in both demos. `approval-local` and
+`default` are task hubs, not workflow versions; `version: 3` is the plan version.
+
+## Demo 1: everything local
 
 ```text
-Laptop client -> PlanApproval -> RecordSubmission -> Waiting for Finance
-                                                   |
-                                            replace worker pod
-                                                   |
-                          Decision -> validate -> ApplyDecision -> Approved
-                              |
-                 no response: Timeout / version 2: RejectedStaleVersion
+HTTP file -> laptop console :5080 -> Docker emulator :8080 <-> laptop worker
+                                          |
+                               local dashboard :8082
 ```
 
-Only the exact outcome `Approve`, from the assigned approver and for the
-requested version, can approve. Self-approval is rejected. Approver strings
-are test inputs, not verified end-user identities; Scheduler authenticates
-the operator, not the person named in the payload.
-
-`ApplyDecision` logs and returns `sunny-soda:v3:approved`. This is a stand-in,
-not a database receipt or an exactly-once business update. Activities can retry.
-
-## Build and configure
-
-The solution contains [worker](../src/Approval.Worker/),
-[client](../src/Approval.Client/), and [shared types](../src/Approval.Contracts/),
-plus [unit tests](../tests/Approval.Tests/).
-Install the SDK pinned in [global.json](../global.json), Docker, Azure CLI,
-compatible `kubectl`, `kubelogin`, and `jq`.
+Terminal 1:
 
 ```bash
-dotnet restore --locked-mode
-dotnet build --configuration Release --no-restore
-dotnet test --configuration Release --no-build --no-restore
+docker compose up -d emulator
+source scripts/use-env.sh local
+dotnet run --project src/Approval.Worker -c Release --no-build
 ```
 
-If your network blocks NuGet, add
-`--source https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json`
-to restore. Lock files remain required.
-
-Set `ENDPOINT`, `TASKHUB`, and `SCHEDULER_AUTH` explicitly. Missing settings
-fail; the application never falls back to the emulator.
-
-| Where           | ENDPOINT                 | SCHEDULER_AUTH     |
-| --------------- | ------------------------ | ------------------ |
-| Local emulator  | `http://localhost:8080`  | `None`             |
-| Laptop to Azure | Bicep scheduler endpoint | `AzureCli`         |
-| AKS worker      | Bicep scheduler endpoint | `WorkloadIdentity` |
-
-`None` is allowed only on loopback HTTP. Azure requires HTTPS. On AKS,
-the admission webhook injects the tenant and federated token file.
-Plain `ManagedIdentity` uses a different credential path and is not the
-workload-federated setup deployed by this Bicep.
-
-## Validate in this order
-
-1. Start the official emulator, run the worker locally, and exercise the CLI:
-
-   ```bash
-   docker run --rm --name approval-emulator \
-     -p 127.0.0.1:8080:8080 -p 127.0.0.1:8082:8082 \
-     mcr.microsoft.com/dts/dts-emulator:latest
-   ```
-
-   In another terminal, set the emulator settings above, then run:
-
-   ```bash
-   dotnet run --project src/Approval.Worker --configuration Release --no-build
-   ```
-
-   Use a third terminal with the same settings for the client commands below.
-   Stop the local worker before testing Azure or AKS.
-
-2. Set Azure settings and run the worker on your laptop against Scheduler.
-   Use the operator identity authorized by the [infrastructure](../infra/README.md).
-   This separates code/Scheduler issues from AKS image/federation issues.
-3. Stop the laptop worker, build and push the Linux image, then deploy one pod.
-4. Run the restart approval, timeout, and stale-version tests.
-
-For Azure, read the existing deployment outputs; do not hard-code credentials:
+Terminal 2:
 
 ```bash
-export AZURE_SUBSCRIPTION_ID='<approved-subscription>'
-export DEPLOYMENT_NAME='durable-spike-infra'
-az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+source scripts/use-env.sh local
+dotnet run --project src/Approval.Console -c Release --no-build
+```
+
+Open [approvals.http](../approvals.http) in an HTTP client such as VS Code REST
+Client. Keep `@base = http://127.0.0.1:5080` and choose a fresh `@instance`.
+
+1. Send **Environment**: confirm `EMULATOR` and task hub `approval-local`.
+2. Send **Start**, then **Business status and durable history** until the
+   instance is `Running` with `Waiting for Finance`.
+3. Open the [local dashboard](http://localhost:8082/subscriptions/local/schedulers/emulator/taskhubs/approval-local/orchestrations).
+   Find that same instance ID and inspect Timeline, History, and Flow.
+4. Send **Refused stale event**, then status: it must still be waiting.
+5. Send **Approve**, then status again: expect `Approved`, version `3`,
+   receipt `sunny-soda:v3:approved`. Watch the event and apply step in the dashboard.
+
+For buttons instead of HTTP, use [our local console](http://localhost:5080).
+The **Acting as** dropdown can demonstrate wrong-approver/self-approval refusals.
+Run Reject on a separate fresh instance; do not approve and reject the same run.
+
+Docker keeps the emulator/dashboard running after a terminal closes. Its
+state is **in memory**: restarting/recreating it clears instances.
+`docker compose stop emulator` stops it deliberately.
+
+## Demo 2: test the cloud worker from your laptop
+
+First complete [Azure provisioning](../infra/README.md) and
+[worker deployment](../src/README.md#deploy-the-worker-to-aks).
+AKS and its worker must be running. Use an account with the configured task-hub
+permissions, and keep your current public IP on the allowlists.
+
+```text
+HTTP file -> laptop console :5081 -> Azure Scheduler <-> AKS worker
+                                          |
+                              Azure dashboard in your browser
+```
+
+In a new terminal:
+
+```bash
 az login
-configuration="$(az deployment sub show --name "$DEPLOYMENT_NAME" \
-  --query properties.outputs.configuration.value --output json)"
-export ENDPOINT="$(jq -r .schedulerEndpoint <<< "$configuration")"
-export TASKHUB="$(jq -r .taskHubName <<< "$configuration")"
-export AZURE_CLIENT_ID="$(jq -r .workloadIdentityClientId <<< "$configuration")"
-export AKS_CLUSTER_NAME="$(jq -r .clusterName <<< "$configuration")"
-export REGISTRY_NAME="$(jq -r .registryName <<< "$configuration")"
-export REGISTRY_LOGIN_SERVER="$(jq -r .registryLoginServer <<< "$configuration")"
-export SCHEDULER_AUTH=AzureCli
+export AZURE_SUBSCRIPTION_ID='<approved-subscription>'
+az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+# Optional: set DEPLOYMENT_NAME if it is not durable-spike-infra.
+source scripts/use-env.sh azure
+printf 'Scheduler: %s\nTask hub: %s\nDashboard: %s\n' \
+  "$ENDPOINT" "$TASKHUB" "$DASHBOARD_URL"
+dotnet run --project src/Approval.Console -c Release --no-build
 ```
 
-Keep the laptop's actual public egress IPv4 on the AKS/Scheduler allowlists.
-Changing VPNs can change it. Allow time for RBAC propagation.
-If k9s shows `Context: n/a` or DNS errors, check AKS is running first.
+The script reads `schedulerEndpoint` and other outputs from the existing Bicep
+deployment and writes ignored `env/azure.env`. No endpoint or token is hard-coded.
 
-## Deploy the worker
+1. In [approvals.http](../approvals.http), set `@base = http://127.0.0.1:5081`
+   and use a new instance ID.
+2. Send **Environment**: confirm `AZURE`, the actual Azure endpoint, and `default`.
+3. Repeat Start, status, stale refusal, valid approval, and status from Demo 1.
+4. Open [our Azure-connected console](http://localhost:5081), then
+   **Open Scheduler dashboard**. Alternatively, open the printed
+   `DASHBOARD_URL`. Sign in with your authorized Entra account.
+5. Find the same instance and inspect its events, result, and connected worker.
+   The workflow is processed by the AKS pod, not a laptop worker.
+
+Yes, you are testing AKS **from your laptop**: the console's SDK connects to
+Azure Scheduler, which dispatches work to the AKS worker. The `.http` file
+calls the console's HTTP endpoints; Scheduler communication uses the SDK.
+No AKS ingress or `kubectl port-forward` is needed for this path.
+
+The emulator dashboard at port 8082 only shows **local** runs. It is not a
+proxy for Azure. Use the actual Azure dashboard link for cloud runs.
+Do not start a laptop worker against the Azure hub while AKS is consuming it.
+Switching shell settings does not change an already-running process.
+
+## What to check
+
+| Test                                               | Expected business result                                      |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| Valid approval                                     | `Approved`, version 3, receipt `sunny-soda:v3:approved`       |
+| Explicit rejection                                 | `Rejected`, no receipt                                        |
+| No decision before the deadline                    | `Timeout`, no receipt                                         |
+| Wrong actor, self-approval, stale version, or typo | Refused; still waiting on the original timer                  |
+| Replace the waiting worker                         | New pod; the same instance can complete                       |
+| Kill the worker during the delayed apply step      | Receipt attempt on both pods; evidence of possible duplicates |
+
+`202 Accepted` means a decision event was sent. Runtime `Completed` alone
+does not mean approved: check the returned business result.
+For dashboard **Raise Event**, use name `Decision` and:
+
+```json
+{"approver":"finance","outcome":"Approve","version":3}
+```
+
+## Automated demo checks
 
 ```bash
-export IMAGE_TAG="sunny-soda-$(date -u +%Y%m%d%H%M%S)"
-az acr build --registry "$REGISTRY_NAME" --platform linux/amd64 \
-  --image "approval-worker:$IMAGE_TAG" --file Dockerfile .
-digest="$(az acr repository show --name "$REGISTRY_NAME" \
-  --image "approval-worker:$IMAGE_TAG" --query digest --output tsv)"
-export WORKER_IMAGE="$REGISTRY_LOGIN_SERVER/approval-worker@$digest"
-bash scripts/deploy-worker.sh
+bash scripts/test-console.sh http://127.0.0.1:5080
+bash scripts/test-console.sh http://127.0.0.1:5081
+
+source scripts/use-env.sh azure
+bash scripts/test-approval.sh sunny-soda-fresh-id
+bash scripts/test-inflight.sh
 ```
 
-The [Dockerfile](../Dockerfile) runs as a non-root user.
-To use the Microsoft NuGet mirror during the container build, add
-`--build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json`.
-It can also be built locally with `docker buildx build --platform linux/amd64`.
-The [manifest](../deploy/worker.yaml) uses one fixed replica, resource limits,
-and 60 seconds for graceful termination. Its namespace/service account match
-`system:serviceaccount:durable-spike:durable-worker`.
-The deployment script validates inputs and the Kubernetes context.
+The last two need `kubectl`/`kubelogin` and the selected AKS context; they delete
+only the demo worker pod. The in-flight test force-deletes it during a 30-second
+activity. Results, IDs, logs, and history go to ignored `.build/evidence/`.
+Pod Ready is not proof of Scheduler connection; measure actual workflow resume.
 
-The kubelet's `AcrPull` does not permit image publishing. Verify the build/push
-identity has the permissions needed for the chosen path. `az acr build` and
-local `docker push` have different permission requirements; do not add roles
-unless the approved build identity needs them.
+## Limits
 
-## Run the three acceptance cases
+**Acting as is a simulation, not authentication.** Keep both consoles on your
+laptop. `ApplyDecision` logs a stand-in receipt, not a duplicate-safe business
+update. Policy chains, Teams, audit storage, trace backends, and load are later.
+Remote dashboard UI verification still requires browser sign-in; successful SDK
+tests alone are not dashboard proof. Data Contributor can terminate/purge and
+must not be treated as a production approver role.
 
-```bash
-dotnet src/Approval.Client/bin/Release/net10.0/Approval.Client.dll start \
-  --instance sunny-soda-v3-001 --plan sunny-soda --version 3 \
-  --requester requester --approver finance --timeout-minutes 15
-dotnet src/Approval.Client/bin/Release/net10.0/Approval.Client.dll status \
-  --instance sunny-soda-v3-001
-```
-
-Observe `Running` and `Waiting for Finance`, delete only the worker pod, and
-wait for a Ready replacement. Then send:
-
-```bash
-dotnet src/Approval.Client/bin/Release/net10.0/Approval.Client.dll decide \
-  --instance sunny-soda-v3-001 --approver finance --version 3 --outcome Approve
-dotnet src/Approval.Client/bin/Release/net10.0/Approval.Client.dll status \
-  --instance sunny-soda-v3-001 --history
-```
-
-For a complete automated run, use a fresh prefix instead of manually starting
-the same instance first:
-
-```bash
-bash scripts/test-approval.sh sunny-soda-v3
-```
-
-This deletes only the selected approval-worker pod, waits for its replacement,
-then runs a two-minute no-response case and a version-2 decision.
-It refuses to overwrite an existing instance or evidence directory.
-
-| Check                                           | Pass condition                                      |
-| ----------------------------------------------- | --------------------------------------------------- |
-| Image, worker identity, and Scheduler connection | Worker processes work without 401/403 errors         |
-| Laptop identity and connectivity                | Client starts and queries the instance              |
-| Persisted wait                                  | Runtime `Running`, status `Waiting for Finance`      |
-| Replacement recovery                            | New pod name, original instance completes           |
-| Approval                                        | `Approved`, version 3, `sunny-soda:v3:approved`        |
-| History                                         | Start, submission, timer, decision, apply, completion |
-| No response                                     | `Timeout`, no receipt and no `ApplyDecision` step     |
-| Version 2 decision                              | `RejectedStaleVersion`, no receipt or apply step      |
-
-Runtime `Completed` alone is not approval. Inspect the business result.
-View the same instance in Scheduler's dashboard; SDK-exported history is
-also captured. Each run writes IDs, pod names, history, logs, and timings
-under `.build/evidence/<prefix>/`. Do not commit credentials or tokens.
-
-## Verified on 2026-11-13
-
-All 38 unit tests passed. The emulator, laptop-to-Azure worker/client, and
-the published non-root container were validated before AKS deployment.
-The three AKS runs completed at `17:07:45Z`:
-
-| Instance                     | Result                                    |
-| ---------------------------- | ----------------------------------------- |
-| `sunny-soda-v3-001`           | `Approved`, version 3, expected receipt    |
-| `sunny-soda-v3-timeout-001`   | `Timeout`, no receipt or apply activity    |
-| `sunny-soda-v3-stale-001`     | `RejectedStaleVersion`, no receipt or apply |
-
-Worker pod suffix changed from `4zdps` to `nd8zl`; the instance ID did not
-change. Measured wait, replacement, and resume were 4 seconds each; the
-no-response run took 120 seconds. These are observations, not SLAs.
-SDK-exported history verified the required step order; the dashboard UI
-was not separately tested. The immutable deployed image digest is
-`sha256:b31c6988eb62ec6a74c5c6f089a6648e9216d3355ff5c5f8baff10c09e23f21a`.
-
-## Stage 2, not covered
-
-Multi-step policies, trusted reviewer identity binding, Teams cards, an audit
-store, real duplicate-safe destination updates, monitoring-backend traces,
-code upgrades with waiting instances, high availability, autoscaling, and load.
-Do not infer production latency or availability guarantees from this test.
-
-References: [official Human Interaction sample][sample],
-[AKS quickstart][aks], and [Scheduler emulator][emulator].
-
-[sample]: https://github.com/Azure-Samples/Durable-Task-Scheduler/tree/7152d82c656576b9cda47d33ac2de4f61aacff66/samples/durable-task-sdks/dotnet/HumanInteraction
-[aks]: https://learn.microsoft.com/en-us/azure/durable-task/sdks/quickstart-aks-durable-task-scheduler
-[emulator]: https://learn.microsoft.com/en-us/azure/durable-task/scheduler/develop-with-durable-task-scheduler
+Back to [repository overview](../README.md) or [source code guide](../src/README.md).

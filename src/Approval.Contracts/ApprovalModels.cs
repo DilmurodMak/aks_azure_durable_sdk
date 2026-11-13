@@ -5,7 +5,8 @@ public sealed record ApprovalRequest(
     int Version,
     string Requester,
     string Approver,
-    double TimeoutMinutes)
+    double TimeoutMinutes,
+    int ApplyDecisionDelaySeconds = 0)
 {
     public void Validate()
     {
@@ -27,12 +28,19 @@ public sealed record ApprovalRequest(
         {
             throw new ArgumentException("TimeoutMinutes must be greater than zero and at most 1440.");
         }
+
+        if (ApplyDecisionDelaySeconds is < 0 or > 60)
+        {
+            throw new ArgumentException("ApplyDecisionDelaySeconds must be between zero and 60.");
+        }
     }
 }
 
 public sealed record Decision(string Approver, string Outcome, int Version);
 
 public sealed record ApprovalResult(string Status, int Version, string? Receipt);
+
+public sealed record ApplyDecisionRequest(string Receipt, int DelaySeconds = 0);
 
 public static class ApprovalNames
 {

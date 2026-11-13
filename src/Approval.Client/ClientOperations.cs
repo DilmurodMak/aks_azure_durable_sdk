@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Globalization;
 using Approval.Contracts;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -28,6 +29,17 @@ public static class ClientOperations
             }
 
             StartOrchestrationOptions options = new StartOrchestrationOptions(command.InstanceId)
+            {
+                Tags = new Dictionary<string, string>
+                {
+                    ["durabletask.displayName"] = $"{request.PlanId} v{request.Version} - Finance",
+                    ["client"] = "spike",
+                    ["workflow"] = ApprovalNames.Orchestration,
+                    ["plan"] = request.PlanId,
+                    ["version"] = request.Version.ToString(CultureInfo.InvariantCulture),
+                    ["source"] = command.Source
+                }
+            }
                 .WithDedupeStatuses(Enum.GetValues<OrchestrationRuntimeStatus>());
             string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
                 ApprovalNames.Orchestration, request, options, cancellation);

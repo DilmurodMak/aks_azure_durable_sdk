@@ -1,0 +1,10 @@
+name: approval-spike
+services:
+  emulator:
+    image: mcr.microsoft.com/dts/dts-emulator@sha256:82ceb7df2fdfc2e22b0013c7b87b7a8e443bcd220d4fb37c32ced8ee23438719
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8082:8082"
+    environment:
+      DTS_TASK_HUB_NAMES: approval-local

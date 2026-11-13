@@ -1,5 +1,6 @@
 using Approval.Contracts;
 using Approval.Worker;
+using Microsoft.DurableTask.Converters;
 using Microsoft.DurableTask.Worker;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,7 @@ catch (ArgumentException exception)
 }
 
 builder.Services.AddDurableTaskWorker()
+    .Configure(options => options.DataConverter = new JsonDataConverter(ApprovalJson.CreateSerializerOptions()))
     .AddTasks(tasks =>
     {
         tasks.AddOrchestrator<PlanApproval>();

@@ -1,0 +1,50 @@
+@base = http://127.0.0.1:5080
+@instance = console-http-001
+
+### Environment (use port 5081 for the Azure-connected console)
+GET {{base}}/api/environment
+
+### Start a fresh approval. Use a new instance ID for each test.
+POST {{base}}/api/approvals
+X-Approval-Console: spike
+Content-Type: application/json
+
+{
+  "instanceId": "{{instance}}",
+  "planId": "sunny-soda",
+  "version": 3,
+  "requester": "requester",
+  "approver": "finance",
+  "timeoutMinutes": 15,
+  "applyDecisionDelaySeconds": 0
+}
+
+### List waiting approvals
+GET {{base}}/api/approvals
+
+### Refused stale event; 202 means sent, NOT approved. Run status afterward.
+POST {{base}}/api/approvals/{{instance}}/decision
+X-Approval-Console: spike
+Content-Type: application/json
+
+{"actingAs":"finance","outcome":"Approve","version":2}
+
+### Approve (demo actor, not Entra authentication)
+POST {{base}}/api/approvals/{{instance}}/decision
+X-Approval-Console: spike
+Content-Type: application/json
+
+{"actingAs":"finance","outcome":"Approve","version":3}
+
+### Reject (use a different waiting run)
+POST {{base}}/api/approvals/{{instance}}/decision
+X-Approval-Console: spike
+Content-Type: application/json
+
+{"actingAs":"finance","outcome":"Reject","version":3}
+
+### Business status and durable history
+GET {{base}}/api/approvals/{{instance}}?history=true
+
+### Not found: 404
+GET {{base}}/api/approvals/console-does-not-exist
