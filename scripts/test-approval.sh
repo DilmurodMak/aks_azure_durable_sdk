@@ -18,24 +18,41 @@ if [[ ! "$prefix" =~ ^[a-zA-Z0-9-]{1,60}$ ]]; then
   exit 2
 fi
 dotnet="${DOTNET:-dotnet}"
+base="http://127.0.0.1:${CONSOLE_PORT:-5081}"
 evidence=".build/evidence/$prefix"
 if [ -e "$evidence" ]; then
   printf 'ERROR: Evidence already exists at %s. Use a fresh prefix; history is not overwritten.\n' "$evidence" >&2
   exit 2
 fi
 mkdir -p "$evidence"
+policy_prefix="approval-policy-$(date -u +%Y%m%d%H%M%S)-$$"
+policy_number=0
 
 client() {
   "$dotnet" src/Approval.Client/bin/Release/net10.0/Approval.Client.dll "$@"
 }
 
+post() {
+  curl --fail-with-body --silent --show-error --max-time 60 \
+    --header 'Content-Type: application/json' --header 'X-Approval-Console: spike' \
+    --data "$2" "$base$1"
+}
+
+curl --fail --silent --show-error --max-time 60 "$base/api/environment" > "$evidence/console-environment.json"
+if ! jq --exit-status --arg endpoint "$ENDPOINT" --arg taskHub "$TASKHUB" \
+    '.environment=="AZURE" and .endpoint==$endpoint and .taskHub==$taskHub' \
+    "$evidence/console-environment.json" >/dev/null; then
+  printf 'ERROR: Console must use the same Azure Scheduler endpoint and task hub as the client.\n' >&2
+  exit 2
+fi
+
 wait_for() {
   local instance="$1" expected="$2" deadline=$((SECONDS + 180)) status
   while [ "$SECONDS" -lt "$deadline" ]; do
-    status="$(client status --instance "$instance")"
+    if ! status="$(client status --instance "$instance")"; then sleep 2; continue; fi
     printf '%s\n' "$status" > "$evidence/$instance.status.json"
     if [ "$expected" = Waiting ]; then
-      if jq --exit-status '.runtimeStatus == "Running" and .customStatus == "Waiting for Finance" and .result == null' \
+      if jq --exit-status '.runtimeStatus == "Running" and .customStatus.state == "Waiting" and .result == null' \
           <<< "$status" >/dev/null; then
         return
       fi
@@ -56,10 +73,26 @@ wait_for() {
 }
 
 start() {
-  client start --instance "$1" --plan sunny-soda --version 3 \
-    --requester requester --approver finance --timeout-minutes "$2" > "$evidence/$1.start.json"
-  wait_for "$1" Waiting
-  cp "$evidence/$1.status.json" "$evidence/$1.waiting.json"
+  policy_number=$((policy_number+1))
+  local policy_id="$policy_prefix-$policy_number"
+  # Set actors in the separate simulator for this test's client scope.
+  post /api/demo-identities "$(jq -nc --arg client "$policy_id" \
+    '{clientId:$client,accountId:null,assignments:{Finance:"finance"}}')" > "$evidence/$1.identities.json"
+  post /api/policies "$(jq -nc --arg id "$policy_id" --argjson minutes "$2" \
+    '{id:$id,clientId:$id,workflowCode:"Gate2",baseVersion:0,
+      stages:[{name:"finance",roles:["Finance"],timeoutMinutes:$minutes}]}')" > "$evidence/$1.policy.json"
+  post /api/workflows "$(jq -nc --arg id "$1" --arg client "$policy_id" \
+    '{instanceId:$id,clientId:$client,workflowCode:"Gate2",planId:"sunny-soda",version:3,requester:"requester"}')" \
+    > "$evidence/$1.start.json"
+  jq --exit-status --arg id "$1" --arg policy "$policy_id" \
+    '.instanceId==$id and .policyId==$policy and .policyVersion==1' "$evidence/$1.start.json" >/dev/null
+  wait_for "$1-s1-r1" Waiting
+  cp "$evidence/$1-s1-r1.status.json" "$evidence/$1-s1-r1.waiting.json"
+  client status --instance "$1" --history > "$evidence/$1.waiting.json"
+  jq --exit-status --arg id "$1" '
+    .instanceId==$id and .runtimeStatus=="Running" and .result==null and
+    ([.history[]|select(.eventType=="SubOrchestrationInstanceCreated" and .name=="ApprovalStep")]|length)==1
+  ' "$evidence/$1.waiting.json" >/dev/null
 }
 
 main="$prefix-001"
@@ -99,61 +132,90 @@ if [ "$replacement_ready" != true ]; then
 fi
 new_pod="$(jq --raw-output '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name' "$evidence/pods-after.json")"
 replacement_seconds=$((SECONDS - restarted))
-wait_for "$main" Waiting
-cp "$evidence/$main.status.json" "$evidence/$main.after-replacement.json"
+wait_for "$main-s1-r1" Waiting
+cp "$evidence/$main-s1-r1.status.json" "$evidence/$main-s1-r1.after-replacement.json"
+client status --instance "$main" --history > "$evidence/$main.after-replacement.json"
+jq --exit-status --arg id "$main" --slurpfile before "$evidence/$main.waiting.json" '
+  .instanceId==$id and .createdAt==$before[0].createdAt and .runtimeStatus=="Running" and .result==null and
+  ([.history[]|select(.eventType=="SubOrchestrationInstanceCreated" and .name=="ApprovalStep")]|length)==1
+' "$evidence/$main.after-replacement.json" >/dev/null
 decided="$SECONDS"
-client decide --instance "$main" --approver finance --version 3 --outcome Approve > "$evidence/$main.decision.json"
+client decide --instance "$main-s1-r1" --approver finance --version 3 --outcome Approve > "$evidence/$main-s1-r1.decision.json"
 wait_for "$main" Approved
 resume_seconds=$((SECONDS - decided))
 client status --instance "$main" --history > "$evidence/$main.history.json"
-jq --exit-status '.result.receipt == "sunny-soda:v3:approved"' "$evidence/$main.history.json" >/dev/null
-jq --exit-status '
-  [.history[] |
-    if .eventType == "TaskScheduled" or .eventType == "EventRaised"
-    then .eventType + ":" + .name else .eventType end] as $events |
-  ["ExecutionStarted", "TaskScheduled:RecordSubmission", "TimerCreated",
-   "EventRaised:Decision", "TaskScheduled:ApplyDecision", "ExecutionCompleted"] as $expected |
-  (reduce $events[] as $event (0;
-    if . < ($expected | length) and $event == $expected[.] then . + 1 else . end)) == ($expected | length)
-' "$evidence/$main.history.json" >/dev/null
 
 start "$timeout" 2
 timeout_started="$SECONDS"
 wait_for "$timeout" Timeout
 timeout_seconds=$((SECONDS - timeout_started))
 client status --instance "$timeout" --history > "$evidence/$timeout.history.json"
+client status --instance "$timeout-s1-r1" --history > "$evidence/$timeout-s1-r1.history.json"
 jq --exit-status '
   def epoch: sub("\\+00:00$"; "Z") | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
   [.history[] | select(.eventType == "TimerCreated")][0] as $timer |
   (($timer.fireAt | epoch) - ($timer.timestamp | epoch)) == 120 and
   (.lastUpdatedAt | epoch) >= ($timer.fireAt | epoch)
-' "$evidence/$timeout.history.json" >/dev/null
+' "$evidence/$timeout-s1-r1.history.json" >/dev/null
 
 start "$stale" 2
-client decide --instance "$stale" --approver finance --version 2 --outcome Approve > "$evidence/$stale.decision.json"
+client decide --instance "$stale-s1-r1" --approver finance --version 2 --outcome Approve > "$evidence/$stale-s1-r1.decision.json"
 deadline=$((SECONDS+60))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  client status --instance "$stale" --history > "$evidence/$stale.refused.json"
+  client status --instance "$stale-s1-r1" --history > "$evidence/$stale-s1-r1.refused.json"
   if jq --exit-status '
-      .runtimeStatus == "Running" and .customStatus == "Waiting for Finance" and
+      .runtimeStatus == "Running" and .customStatus.state == "Waiting" and
       any(.history[]; .eventType == "EventRaised" and .name == "Decision")
-    ' "$evidence/$stale.refused.json" >/dev/null; then break; fi
+    ' "$evidence/$stale-s1-r1.refused.json" >/dev/null; then break; fi
   sleep 2
 done
 jq --exit-status '
-  .runtimeStatus == "Running" and .customStatus == "Waiting for Finance" and .result == null and
+  .runtimeStatus == "Running" and .customStatus.state == "Waiting" and .result == null and
   any(.history[]; .eventType == "EventRaised" and .name == "Decision") and
   ([.history[] | select(.eventType == "TaskScheduled" and .name == "ApplyDecision")] | length == 0) and
   ([.history[] | select(.eventType == "TimerCreated")] | length == 1)
-' "$evidence/$stale.refused.json" >/dev/null
-client decide --instance "$stale" --approver finance --version 3 --outcome Approve > "$evidence/$stale.valid-decision.json"
+' "$evidence/$stale-s1-r1.refused.json" >/dev/null
+client decide --instance "$stale-s1-r1" --approver finance --version 3 --outcome Approve > "$evidence/$stale-s1-r1.valid-decision.json"
 wait_for "$stale" Approved
 client status --instance "$stale" --history > "$evidence/$stale.history.json"
-jq --exit-status '.result.receipt == "sunny-soda:v3:approved"' "$evidence/$stale.history.json" >/dev/null
-for instance in "$timeout"; do
-  jq --exit-status \
-    '.result.receipt == null and ([.history[] | select(.eventType == "TaskScheduled" and .name == "ApplyDecision")] | length == 0)' \
-    "$evidence/$instance.history.json" >/dev/null
+for instance in "$main" "$stale"; do
+  jq --exit-status '
+    [.history[] |
+      if .eventType=="TaskScheduled" then .eventType+":"+.name else .eventType end] as $events |
+    ["ExecutionStarted", "SubOrchestrationInstanceCreated", "SubOrchestrationInstanceCompleted",
+      "TaskScheduled:ApplyDecision", "ExecutionCompleted"] as $expected |
+    .result.receipt=="sunny-soda:v3:approved" and
+    ([.history[]|select(.eventType=="TaskScheduled" and .name=="ApplyDecision")]|length)==1 and
+    (reduce $events[] as $event (0;
+      if . < ($expected|length) and $event==$expected[.] then .+1 else . end))==($expected|length)
+  ' "$evidence/$instance.history.json" >/dev/null
+  client status --instance "$instance-s1-r1" --history > "$evidence/$instance-s1-r1.history.json"
+  jq --exit-status '
+    [.history[] |
+      if .eventType=="TaskScheduled" or .eventType=="EventRaised"
+      then .eventType+":"+.name else .eventType end] as $events |
+    ["ExecutionStarted", "TaskScheduled:RecordSubmission", "TimerCreated",
+      "EventRaised:Decision", "ExecutionCompleted"] as $expected |
+    (reduce $events[] as $event (0;
+      if . < ($expected|length) and $event==$expected[.] then .+1 else . end))==($expected|length)
+  ' "$evidence/$instance-s1-r1.history.json" >/dev/null
+done
+jq --exit-status \
+  '.result.receipt==null and ([.history[]|select(.eventType=="TaskScheduled" and .name=="ApplyDecision")]|length)==0' \
+  "$evidence/$timeout.history.json" >/dev/null
+for instance in "$main" "$timeout" "$stale"; do
+  jq --exit-status --arg child "$instance-s1-r1" '
+    (.result.steps|length)==1 and .result.steps[0].instanceId==$child and
+    .result.steps[0].role=="Finance" and .result.steps[0].status==.result.status
+  ' "$evidence/$instance.history.json" >/dev/null
+  jq --exit-status --slurpfile parent "$evidence/$instance.history.json" \
+    '.runtimeStatus=="Completed" and .result.status==$parent[0].result.status and
+      .result.version==3 and .result.receipt==null and
+      any(.history[]; .eventType=="TaskScheduled" and .name=="RecordSubmission") and
+      any(.history[]; .eventType=="ExecutionCompleted") and
+      ([.history[]|select(.eventType=="TimerCreated")]|length)==1 and
+      ([.history[]|select(.eventType=="TaskScheduled" and .name=="ApplyDecision")]|length)==0' \
+    "$evidence/$instance-s1-r1.history.json" >/dev/null
 done
 
 kubectl --context "$AKS_CLUSTER_NAME" --namespace durable-spike \
@@ -163,7 +225,8 @@ if grep -Eiq 'unauthenticated|permissiondenied|statuscode[:= ]+(401|403)' \
   printf 'ERROR: Authentication/authorization errors appear in the worker logs.\n' >&2
   exit 1
 fi
-grep --fixed-strings 'sunny-soda:v3:approved' "$evidence/worker-after.log" >/dev/null
+grep --fixed-strings "ApplyDecision attempt instance=$main receipt=sunny-soda:v3:approved" \
+  "$evidence/worker-after.log" >/dev/null
 jq --null-input \
   --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg instance "$main" --arg oldPod "$old_pod" --arg newPod "$new_pod" \
@@ -175,5 +238,5 @@ jq --null-input \
     resumeSeconds: $resumeSeconds, timeoutObservedSeconds: $timeoutSeconds,
     restartApproval: "Pass", timeout: "Pass", staleVersion: "Pass",
     receipt: "sunny-soda:v3:approved", historyOrder: "Pass",
-    note: "Pod Ready is not Scheduler-connected; resumeSeconds measures real decision processing. Stale input is refused, stays waiting, then a valid approval completes."}' > "$evidence/summary.json"
+    note: "Saved Finance policies start workflows through the Azure Console. Pod replacement preserves the parent; children own decisions/timers, only approved parents apply receipts. Pod Ready is not Scheduler-connected; resumeSeconds measures real decision processing."}' > "$evidence/summary.json"
 cat "$evidence/summary.json"

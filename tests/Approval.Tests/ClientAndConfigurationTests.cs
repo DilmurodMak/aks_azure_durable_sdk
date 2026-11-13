@@ -6,13 +6,12 @@ namespace Approval.Tests;
 public sealed class ClientAndConfigurationTests
 {
     [Fact]
-    public void StartParsesTheRequestedSunnySodaInput()
+    public void DirectStepStartsAreNotSupported()
     {
-        ClientCommand command = ClientCommand.Parse([
+        Assert.Throws<ArgumentException>(() => ClientCommand.Parse([
             "start", "--instance", "sunny-soda-v3-001", "--plan", "sunny-soda", "--version", "3",
             "--requester", "requester", "--approver", "finance"
-        ]);
-        Assert.Equal(new ApprovalRequest("sunny-soda", 3, "requester", "finance", 15), command.Request);
+        ]));
     }
 
     [Theory]
@@ -33,10 +32,9 @@ public sealed class ClientAndConfigurationTests
     [InlineData("1441")]
     public void InvalidTimeoutIsAnExplicitError(string timeout)
     {
-        Assert.Throws<ArgumentException>(() => ClientCommand.Parse([
-            "start", "--instance", "test", "--plan", "sunny-soda", "--version", "3",
-            "--requester", "requester", "--approver", "finance", "--timeout-minutes", timeout
-        ]));
+        double minutes = double.Parse(timeout, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Throws<ArgumentException>(() =>
+            new ApprovalRequest("sunny-soda", 3, "requester", "finance", minutes).Validate());
     }
 
     [Theory]

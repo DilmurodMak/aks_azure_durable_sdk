@@ -20,6 +20,13 @@ builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, p
 builder.Services.AddSingleton<DataConverter>(new JsonDataConverter(ApprovalJson.CreateSerializerOptions()));
 builder.Services.AddDurableTaskClient(options => options.UseDurableTaskScheduler(connection.ConnectionString));
 builder.Services.AddScoped<IApprovalConsoleService, ApprovalConsoleService>();
+builder.Services.AddSingleton<IPolicyStore>(new PolicyStore(
+    Environment.GetEnvironmentVariable("POLICY_STORE_PATH") ??
+    Path.Combine(builder.Environment.ContentRootPath, "../../approval_policies", mode == "EMULATOR" ? "local.json" : "azure.json")));
+builder.Services.AddSingleton<IDemoIdentityStore>(new DemoIdentityStore(
+    Environment.GetEnvironmentVariable("DEMO_IDENTITIES_PATH") ??
+    Path.Combine(builder.Environment.ContentRootPath, "../../demo_settings", mode == "EMULATOR" ? "local.json" : "azure.json")));
+builder.Services.AddScoped<IApprovalChainService, ApprovalChainService>();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ConsoleExceptionHandler>();
 builder.Services.AddOpenApi();
@@ -53,6 +60,7 @@ app.UseRequestTimeouts();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapOpenApi();
+app.MapPolicies();
 app.MapApprovals(new(mode, connection.Endpoint, connection.TaskHub, dashboard,
     "Spike only: Acting as is NOT authentication. Never publish or port-forward this console."));
 await app.RunAsync();

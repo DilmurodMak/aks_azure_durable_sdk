@@ -12,11 +12,6 @@ public static class ApprovalEndpoints
             IApprovalConsoleService service, CancellationToken cancellation) =>
                 TypedResults.Ok(await service.ListAsync(cancellation)))
             .WithSummary("List waiting approvals.");
-        app.MapPost("/api/approvals", async Task<Created<object>> (
-            CreateApprovalRequest request, IApprovalConsoleService service, CancellationToken cancellation) =>
-                TypedResults.Created($"/api/approvals/{request.InstanceId}", await service.StartAsync(request, cancellation)))
-            .WithSummary("Start a fresh approval with explicit demo participants.")
-            .ProducesProblem(400).ProducesProblem(409);
         app.MapPost("/api/approvals/{id}/decision", async Task<Accepted<object>> (
             string id, DecisionForm decision, IApprovalConsoleService service, CancellationToken cancellation) =>
                 TypedResults.Accepted($"/api/approvals/{id}", await service.DecideAsync(id, decision, cancellation)))

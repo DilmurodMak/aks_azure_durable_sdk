@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Globalization;
 using Approval.Contracts;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -18,47 +17,23 @@ public static class ClientOperations
     public static async Task<object> ExecuteAsync(
         DurableTaskClient client, ClientCommand command, CancellationToken cancellation)
     {
-        if (command.Name == "start")
-        {
-            ApprovalRequest request = command.Request
-                ?? throw new ArgumentException("Start requires an approval request.");
-            request.Validate();
-            if (await client.GetInstanceAsync(command.InstanceId, cancellation) is not null)
-            {
-                throw new InvalidOperationException($"Instance {command.InstanceId} already exists. Use a fresh ID; do not overwrite its history.");
-            }
-
-            StartOrchestrationOptions options = new StartOrchestrationOptions(command.InstanceId)
-            {
-                Tags = new Dictionary<string, string>
-                {
-                    ["durabletask.displayName"] = $"{request.PlanId} v{request.Version} - Finance",
-                    ["client"] = "spike",
-                    ["workflow"] = ApprovalNames.Orchestration,
-                    ["plan"] = request.PlanId,
-                    ["version"] = request.Version.ToString(CultureInfo.InvariantCulture),
-                    ["source"] = command.Source
-                }
-            }
-                .WithDedupeStatuses(Enum.GetValues<OrchestrationRuntimeStatus>());
-            string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
-                ApprovalNames.Orchestration, request, options, cancellation);
-            return new { instanceId, orchestration = ApprovalNames.Orchestration, request };
-        }
+        if (command.Name is not ("status" or "decide"))
+            throw new ArgumentException("Only decide and status are supported. Start through the policy-driven workflow endpoint.");
 
         OrchestrationMetadata metadata = await client.GetInstanceAsync(
             command.InstanceId, getInputsAndOutputs: true, cancellation)
             ?? throw new InvalidOperationException($"Instance {command.InstanceId} was not found.");
-        if (metadata.Name != ApprovalNames.Orchestration)
+        if (metadata.Name != ApprovalNames.StepOrchestration && metadata.Name != ApprovalNames.ChainOrchestration)
         {
-            throw new InvalidOperationException($"Instance {command.InstanceId} is not a {ApprovalNames.Orchestration} workflow.");
+            throw new InvalidOperationException($"Instance {command.InstanceId} is not a {ApprovalNames.StepOrchestration} workflow.");
         }
 
-        string? customStatus = metadata.ReadCustomStatusAs<string>();
+        ApprovalProgress? customStatus = metadata.ReadCustomStatusAs<ApprovalProgress>();
         if (command.Name == "decide")
         {
-            if (metadata.RuntimeStatus != OrchestrationRuntimeStatus.Running ||
-                customStatus != ApprovalNames.WaitingStatus)
+            if (metadata.Name != ApprovalNames.StepOrchestration ||
+                metadata.RuntimeStatus != OrchestrationRuntimeStatus.Running ||
+                customStatus?.State != "Waiting")
             {
                 throw new InvalidOperationException(
                     $"Instance {command.InstanceId} is not waiting for a decision ({metadata.RuntimeStatus}, {customStatus}).");
@@ -66,6 +41,17 @@ public static class ClientOperations
 
             Decision decision = command.Decision
                 ?? throw new ArgumentException("Decide requires an explicit decision.");
+            ApprovalRequest input = metadata.ReadInputAs<ApprovalRequest>()
+                ?? throw new InvalidDataException("Approval input is missing.");
+            ApprovalStepContext step = input.Step
+                ?? throw new InvalidOperationException("Reviewer is not part of a policy-driven workflow.");
+            OrchestrationMetadata parent = await client.GetInstanceAsync(
+                step.ParentInstanceId, true, cancellation)
+                ?? throw new InvalidOperationException("Parent workflow was not found.");
+            if (parent.Name != ApprovalNames.ChainOrchestration ||
+                parent.RuntimeStatus != OrchestrationRuntimeStatus.Running ||
+                parent.ReadCustomStatusAs<ApprovalProgress>()?.StageNumber != step.StageNumber)
+                throw new InvalidOperationException("This approval group is not active in its parent workflow.");
             await client.RaiseEventAsync(command.InstanceId, ApprovalNames.DecisionEvent, decision, cancellation);
             return new
             {
@@ -83,14 +69,21 @@ public static class ClientOperations
             history = events.Select(item => JsonSerializer.SerializeToElement(item, item.GetType(), JsonOptions)).ToArray();
         }
 
+        object? output = null;
+        if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
+        {
+            if (metadata.Name == ApprovalNames.ChainOrchestration)
+                output = metadata.ReadOutputAs<ApprovalChainResult>();
+            else
+                output = metadata.ReadOutputAs<ApprovalResult>();
+        }
+
         return new
         {
             instanceId = metadata.InstanceId,
             runtimeStatus = metadata.RuntimeStatus.ToString(),
             customStatus,
-            result = metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed
-                ? metadata.ReadOutputAs<ApprovalResult>()
-                : null,
+            result = output,
             failure = metadata.FailureDetails?.ErrorMessage,
             createdAt = metadata.CreatedAt,
             lastUpdatedAt = metadata.LastUpdatedAt,

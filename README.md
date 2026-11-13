@@ -9,7 +9,8 @@ ms.topic: overview
 
 Prove that a standalone .NET Durable Task SDK worker can wait for a human
 decision, survive worker replacement, and resume the **same approval instance**.
-This uses one `PlanApproval` workflow, not the Azure Functions runtime.
+This uses the .NET SDK, not the Azure Functions runtime. `ApprovalChain`
+coordinates saved policies; `ApprovalStep` handles each approval step.
 
 The test request is "Sunny Soda, plan version 3." We check:
 
@@ -17,6 +18,7 @@ The test request is "Sunny Soda, plan version 3." We check:
 * Explicit rejection and no-response timeout, with no approval receipt
 * Refusal of the wrong approver, self-approval, and stale plan versions
 * In-flight activity redelivery, demonstrating why business updates need deduplication
+* Editing saved policies while existing runs keep their original chain and new runs pick up the edit
 
 ## What runs where
 
@@ -39,16 +41,17 @@ Scheduler stores workflow state; the worker executes orchestrators and activitie
 
 | Guide                                   | Use it for                                                                            |
 | --------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Demo and tests](spike/README.md)       | Local emulator demo, local-to-Azure demo, HTTP requests, dashboards, and pass checks |
+| [Demo and tests](spike/README.md)       | Local emulator demo, local-to-Azure demo, HTTP requests, dashboards, and pass checks  |
 | [Source code](src/README.md)            | Project map, build/test commands, HTTP/CLI interfaces, and worker image deployment    |
 | [Azure infrastructure](infra/README.md) | Bicep provisioning, access configuration, costs, and cleanup                          |
 | [HTTP requests](approvals.http)         | Start an approval, send a decision, and inspect its status/history                    |
+| [Saved policies](approval_policies/README.md) | Local policy storage, automatic activation, and version selection |
 
 ## Demo pages
 
 | URL                                                           | What you see                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| <http://localhost:5080>                                       | Local Console UI connected to the local emulator                  |
+| <http://localhost:5080>                                       | Local Console UI connected to the local emulator                   |
 | <http://localhost:8082>                                       | Microsoft's local Scheduler dashboard                              |
 | <http://localhost:5081>                                       | Local Console UI connected to Azure Scheduler and the AKS worker   |
 | The console's **Open Scheduler dashboard** link in Azure mode | Microsoft's Azure dashboard, using your Entra sign-in              |
@@ -60,5 +63,8 @@ The local dashboard does **not** show Azure runs.
 
 This is a green-deployment spike, not a production approval service.
 **Acting as** is simulated; `ApplyDecision` logs a stand-in receipt.
-Real identity binding, duplicate-safe destination updates, policy chains,
+Policy setup is stored in a local JSON registry and snapshotted for each run.
+Policies contain roles only; simulated user assignments live separately in
+[demo identity settings](demo_settings/README.md).
+Real identity binding, duplicate-safe destination updates, governed policy publishing,
 Teams, audit storage, and production monitoring are not included.

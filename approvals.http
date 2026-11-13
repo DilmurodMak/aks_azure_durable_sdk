@@ -1,50 +1,104 @@
 @base = http://127.0.0.1:5080
-@instance = console-http-001
+@policy = http-demo-policy
+@client = CLI-HTTP
+@instance = chain-http-001
+@approval = {{instance}}-s1-r1
 
 ### Environment (use port 5081 for the Azure-connected console)
 GET {{base}}/api/environment
 
-### Start a fresh approval. Use a new instance ID for each test.
-POST {{base}}/api/approvals
+### Simulator actors: replace this exact client/account scope without creating a policy version.
+POST {{base}}/api/demo-identities
+X-Approval-Console: spike
+Content-Type: application/json
+
+{
+  "clientId": "{{client}}",
+  "accountId": null,
+  "assignments": {"Finance": "finance"}
+}
+
+### Simulator assignments (separate from approval policies)
+GET {{base}}/api/demo-identities
+
+### Save a roles-only policy: stages, role order, and timeouts, never actor assignments.
+POST {{base}}/api/policies
+X-Approval-Console: spike
+Content-Type: application/json
+
+{
+  "id": "{{policy}}",
+  "clientId": "{{client}}",
+  "workflowCode": "Gate2",
+  "baseVersion": 0,
+  "stages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}]
+}
+
+### Saved policies and active selections
+GET {{base}}/api/policies
+
+### Unchanged save: 200, same version. Only policy changes create a new active version.
+POST {{base}}/api/policies
+X-Approval-Console: spike
+Content-Type: application/json
+
+{
+  "id": "{{policy}}",
+  "clientId": "{{client}}",
+  "workflowCode": "Gate2",
+  "baseVersion": 1,
+  "stages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}]
+}
+
+### Start: this is the only business start endpoint. Use a fresh instance ID.
+POST {{base}}/api/workflows
 X-Approval-Console: spike
 Content-Type: application/json
 
 {
   "instanceId": "{{instance}}",
+  "clientId": "{{client}}",
+  "workflowCode": "Gate2",
   "planId": "sunny-soda",
   "version": 3,
-  "requester": "requester",
-  "approver": "finance",
-  "timeoutMinutes": 15,
-  "applyDecisionDelaySeconds": 0
+  "requester": "requester"
 }
 
-### List waiting approvals
+### Parent workflow status and pinned policy
+GET {{base}}/api/workflows/{{instance}}
+
+### Workflow choices for the full-plan overview
+GET {{base}}/api/workflows
+
+### All pinned steps: 1.1/1.2 parallel, 2.1 blocked until group 1 finishes
+GET {{base}}/api/workflows/{{instance}}/approvals
+
+### Waiting reviewer steps (use an actual child ID as @approval)
 GET {{base}}/api/approvals
 
-### Refused stale event; 202 means sent, NOT approved. Run status afterward.
-POST {{base}}/api/approvals/{{instance}}/decision
+### Stale decision: sent, refused by the step, still waiting
+POST {{base}}/api/approvals/{{approval}}/decision
 X-Approval-Console: spike
 Content-Type: application/json
 
 {"actingAs":"finance","outcome":"Approve","version":2}
 
-### Approve (demo actor, not Entra authentication)
-POST {{base}}/api/approvals/{{instance}}/decision
+### Approve the waiting child (demo actor, not Entra authentication)
+POST {{base}}/api/approvals/{{approval}}/decision
 X-Approval-Console: spike
 Content-Type: application/json
 
 {"actingAs":"finance","outcome":"Approve","version":3}
 
+### Child status/history; final receipt is on the parent workflow
+GET {{base}}/api/approvals/{{approval}}?history=true
+
 ### Reject (use a different waiting run)
-POST {{base}}/api/approvals/{{instance}}/decision
+POST {{base}}/api/approvals/{{approval}}/decision
 X-Approval-Console: spike
 Content-Type: application/json
 
 {"actingAs":"finance","outcome":"Reject","version":3}
 
-### Business status and durable history
-GET {{base}}/api/approvals/{{instance}}?history=true
-
 ### Not found: 404
-GET {{base}}/api/approvals/console-does-not-exist
+GET {{base}}/api/workflows/chain-does-not-exist

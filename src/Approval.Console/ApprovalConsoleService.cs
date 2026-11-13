@@ -7,7 +7,6 @@ namespace Approval.Console;
 public interface IApprovalConsoleService
 {
     Task<IReadOnlyList<WaitingApprovalResponse>> ListAsync(CancellationToken cancellation);
-    Task<object> StartAsync(CreateApprovalRequest request, CancellationToken cancellation);
     Task<object> DecideAsync(string id, DecisionForm decision, CancellationToken cancellation);
     Task<object> StatusAsync(string id, bool history, CancellationToken cancellation);
 }
@@ -20,8 +19,8 @@ public sealed class ApprovalConsoleService(DurableTaskClient client) : IApproval
         OrchestrationQuery query = new(Statuses: [OrchestrationRuntimeStatus.Running], FetchInputsAndOutputs: true);
         await foreach (OrchestrationMetadata metadata in client.GetAllInstancesAsync(query).WithCancellation(cancellation))
         {
-            if (metadata.Name != ApprovalNames.Orchestration ||
-                metadata.ReadCustomStatusAs<string>() != ApprovalNames.WaitingStatus)
+            if (metadata.Name != ApprovalNames.StepOrchestration ||
+                metadata.ReadCustomStatusAs<ApprovalProgress>()?.State != "Waiting")
             {
                 continue;
             }
@@ -29,20 +28,11 @@ public sealed class ApprovalConsoleService(DurableTaskClient client) : IApproval
             ApprovalRequest request = metadata.ReadInputAs<ApprovalRequest>()
                 ?? throw new InvalidOperationException("Waiting approval has missing input.");
             waiting.Add(new(metadata.InstanceId, request.PlanId, request.Version, request.Requester,
-                request.Approver, metadata.CreatedAt));
+                request.Approver, metadata.CreatedAt, metadata.ReadCustomStatusAs<ApprovalProgress>(),
+                request.Step?.ParentInstanceId, request.Step?.PolicyVersion, request.Step?.Role));
         }
 
         return waiting;
-    }
-
-    public Task<object> StartAsync(CreateApprovalRequest request, CancellationToken cancellation)
-    {
-        ValidateId(request.InstanceId);
-        ApprovalRequest input = new(request.PlanId, request.Version, request.Requester,
-            request.Approver, request.TimeoutMinutes, request.ApplyDecisionDelaySeconds);
-        input.Validate();
-        return ClientOperations.ExecuteAsync(client,
-            new ClientCommand("start", request.InstanceId, input, Source: "console"), cancellation);
     }
 
     public Task<object> DecideAsync(string id, DecisionForm decision, CancellationToken cancellation)

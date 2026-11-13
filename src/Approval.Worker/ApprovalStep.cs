@@ -4,55 +4,63 @@ using Microsoft.Extensions.Logging;
 
 namespace Approval.Worker;
 
-public sealed class PlanApproval : TaskOrchestrator<ApprovalRequest, ApprovalResult>
+public sealed class ApprovalStep : TaskOrchestrator<ApprovalRequest, ApprovalResult>
 {
     public override async Task<ApprovalResult> RunAsync(TaskOrchestrationContext context, ApprovalRequest input)
     {
-        ArgumentNullException.ThrowIfNull(input);
-        input.Validate();
+        ApprovalValidation.Validate(input);
         await context.CallActivityAsync<string>(nameof(RecordSubmission), input);
-        context.SetCustomStatus(ApprovalNames.WaitingStatus);
-        ILogger logger = context.CreateReplaySafeLogger<PlanApproval>();
+        ApprovalProgress progress = new("Waiting", input.Step?.Stage ?? input.Approver,
+            input.Step?.StageNumber ?? 1, input.Step?.StageCount ?? 1);
+        context.SetCustomStatus(progress);
+        ILogger logger = context.CreateReplaySafeLogger<ApprovalStep>();
 
         using CancellationTokenSource cancellation = new();
         DateTime deadline = context.CurrentUtcDateTime.AddMinutes(input.TimeoutMinutes);
         Task timer = context.CreateTimer(deadline, cancellation.Token);
 
         ApprovalResult result;
-        while (true)
+        try
         {
-            Task<Decision> decisionTask = context.WaitForExternalEvent<Decision>(
-                ApprovalNames.DecisionEvent, cancellation.Token);
-            if (await Task.WhenAny(timer, decisionTask) == timer)
+            while (true)
             {
-                await timer;
-                cancellation.Cancel();
-                result = new ApprovalResult("Timeout", input.Version, null);
+                Task<Decision> decisionTask = context.WaitForExternalEvent<Decision>(
+                    ApprovalNames.DecisionEvent, cancellation.Token);
+                if (await Task.WhenAny(timer, decisionTask) == timer)
+                {
+                    await timer;
+                    result = new ApprovalResult("Timeout", input.Version, null);
+                    break;
+                }
+
+                Decision decision = await decisionTask;
+                string status = EvaluateDecision(input, decision);
+                if (status is not ("Approved" or "Rejected"))
+                {
+                    logger.LogWarning(
+                        "Instance {InstanceId} refused decision: {Reason}; status {Status}; waiting until {Deadline}",
+                        context.InstanceId, status, progress.Display, deadline);
+                    continue;
+                }
+
+                result = new ApprovalResult(status, input.Version, null);
                 break;
             }
-
-            Decision decision = await decisionTask;
-            string status = EvaluateDecision(input, decision);
-            if (status is not ("Approved" or "Rejected"))
-            {
-                logger.LogWarning(
-                    "Instance {InstanceId} refused decision: {Reason}; status {Status}; waiting until {Deadline}",
-                    context.InstanceId, status, ApprovalNames.WaitingStatus, deadline);
-                continue;
-            }
-
+        }
+        finally
+        {
             cancellation.Cancel();
-            string? receipt = status == "Approved"
-                ? await context.CallActivityAsync<string>(
-                    nameof(ApplyDecision),
-                    new ApplyDecisionRequest(
-                        $"{input.PlanId}:v{input.Version}:approved", input.ApplyDecisionDelaySeconds))
-                : null;
-            result = new ApprovalResult(status, input.Version, receipt);
-            break;
+            try
+            {
+                await timer;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                logger.LogInformation("Instance {InstanceId} approval timer canceled", context.InstanceId);
+            }
         }
 
-        context.SetCustomStatus(result.Status);
+        context.SetCustomStatus(progress with { State = result.Status, Completed = 1 });
         logger.LogInformation("Instance {InstanceId} finished with {Status}, version {Version}, receipt {Receipt}",
             context.InstanceId, result.Status, result.Version, result.Receipt);
         return result;

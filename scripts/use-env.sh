@@ -6,6 +6,8 @@ approval_use_env() {
     local)
       unset AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_FEDERATED_TOKEN_FILE
       source "$root/env/local.env"
+      export POLICY_STORE_PATH="$root/approval_policies/local.json"
+      export DEMO_IDENTITIES_PATH="$root/demo_settings/local.json"
       ;;
     azure)
       : "${AZURE_SUBSCRIPTION_ID:?Set the approved AZURE_SUBSCRIPTION_ID first.}"
@@ -37,6 +39,8 @@ approval_use_env() {
         ' <<< "$configuration" > "$destination"
       ) || return 1
       source "$destination"
+      export POLICY_STORE_PATH="$root/approval_policies/azure.json"
+      export DEMO_IDENTITIES_PATH="$root/demo_settings/azure.json"
       ;;
     *)
       printf 'Usage: source scripts/use-env.sh local|azure\n' >&2

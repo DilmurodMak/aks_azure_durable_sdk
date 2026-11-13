@@ -250,8 +250,10 @@ identity; AcrPull on the kubelet only authorizes pulling images.
 Continue with [worker image deployment](../src/README.md#deploy-the-worker-to-aks),
 then the [local and Azure demos](../spike/README.md). Acceptance runs cover
 approval after pod replacement, timeout, and a refused stale decision followed
-by valid approval. This is a green-deployment spike with one `PlanApproval`
-workflow and local task hub `approval-local`.
+by valid approval. This is a green-deployment spike with one `ApprovalStep`
+step and local task hub `approval-local`. `ApprovalChain` runs saved stage/role
+policies; the Local Console UI persists and resolves those policies before
+starting a workflow. Policy edits need no new Bicep deployment or worker restart.
 The AKS worker uses `Authentication=WorkloadIdentity`; the local client uses
 `Authentication=AzureCli`. Neither uses stored credentials or an implicit
 emulator fallback.

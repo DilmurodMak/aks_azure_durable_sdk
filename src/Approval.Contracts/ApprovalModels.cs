@@ -6,7 +6,8 @@ public sealed record ApprovalRequest(
     string Requester,
     string Approver,
     double TimeoutMinutes,
-    int ApplyDecisionDelaySeconds = 0)
+    int ApplyDecisionDelaySeconds = 0,
+    ApprovalStepContext? Step = null)
 {
     public void Validate()
     {
@@ -44,7 +45,10 @@ public sealed record ApplyDecisionRequest(string Receipt, int DelaySeconds = 0);
 
 public static class ApprovalNames
 {
-    public const string Orchestration = "PlanApproval";
+    public const string StepOrchestration = "ApprovalStep";
+    public const string ChainOrchestration = "ApprovalChain";
     public const string DecisionEvent = "Decision";
-    public const string WaitingStatus = "Waiting for Finance";
+
+    public static string StepInstanceId(string parent, int stageNumber, int reviewerNumber) =>
+        FormattableString.Invariant($"{parent}-s{stageNumber}-r{reviewerNumber}");
 }

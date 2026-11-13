@@ -9,10 +9,11 @@ using Moq;
 
 namespace Approval.Tests;
 
-public sealed class PlanApprovalTests
+public sealed class ApprovalStepTests
 {
     private static readonly ApprovalRequest Request = new("sunny-soda", 3, "requester", "finance", 15);
     private static readonly DateTime Start = new(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly ApprovalProgress Waiting = new("Waiting", "finance", 1, 1);
 
     [Theory]
     [InlineData("another-person", "Approve", 3)]
@@ -37,32 +38,31 @@ public sealed class PlanApprovalTests
         CancellationToken timerToken = default;
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .Callback<DateTime, CancellationToken>((_, token) => timerToken = token)
-            .Returns(new TaskCompletionSource().Task);
+            .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
         context.SetupSequence(item => item.WaitForExternalEvent<Decision>(
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Decision(approver!, outcome!, version))
             .Returns(validDecision.Task);
 
-        Task<ApprovalResult> workflow = new PlanApproval().RunAsync(context.Object, Request);
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
 
         Assert.False(workflow.IsCompleted);
         Assert.False(timerToken.IsCancellationRequested);
         AssertWaitingWithoutApply(context);
-        context.Verify(item => item.CreateReplaySafeLogger<PlanApproval>(), Times.Once);
+        context.Verify(item => item.CreateReplaySafeLogger<ApprovalStep>(), Times.Once);
         VerifyLog(logger, LogLevel.Warning, "refused decision", Times.Once());
-        VerifyLog(logger, LogLevel.Warning, ApprovalNames.WaitingStatus, Times.Once());
+        VerifyLog(logger, LogLevel.Warning, Waiting.Display, Times.Once());
 
         validDecision.SetResult(new Decision("FINANCE", "Approve", 3));
         ApprovalResult result = await workflow;
 
-        Assert.Equal(new ApprovalResult("Approved", 3, "sunny-soda:v3:approved"), result);
+        Assert.Equal(new ApprovalResult("Approved", 3, null), result);
         Assert.True(timerToken.IsCancellationRequested);
         context.Verify(item => item.CreateTimer(Start.AddMinutes(15), It.IsAny<CancellationToken>()), Times.Once);
-        context.Verify(item => item.SetCustomStatus(ApprovalNames.WaitingStatus), Times.Once);
-        context.Verify(item => item.SetCustomStatus("Approved"), Times.Once);
+        context.Verify(item => item.SetCustomStatus(Waiting), Times.Once);
+        context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Approved", "finance", 1, 1, 1)), Times.Once);
         context.Verify(item => item.CallActivityAsync<string>(
-            nameof(ApplyDecision), new ApplyDecisionRequest("sunny-soda:v3:approved", 0),
-            It.IsAny<TaskOptions?>()), Times.Once);
+            nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
 
     [Fact]
@@ -72,13 +72,13 @@ public sealed class PlanApprovalTests
         CancellationToken timerToken = default;
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .Callback<DateTime, CancellationToken>((_, token) => timerToken = token)
-            .Returns(new TaskCompletionSource().Task);
+            .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
         context.SetupSequence(item => item.WaitForExternalEvent<Decision>(
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Decision)null!)
             .ReturnsAsync(new Decision("finance", "Reject", 3));
 
-        ApprovalResult result = await new PlanApproval().RunAsync(context.Object, Request);
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
         Assert.Equal(new ApprovalResult("Rejected", 3, null), result);
         Assert.True(timerToken.IsCancellationRequested);
@@ -97,9 +97,9 @@ public sealed class PlanApprovalTests
         CancellationToken eventToken = default;
         int waits = 0;
         List<DateTime> deadlines = [];
-        List<string?> statuses = [];
+        List<ApprovalProgress?> statuses = [];
         context.Setup(item => item.SetCustomStatus(It.IsAny<object?>()))
-            .Callback<object?>(status => statuses.Add(status as string));
+            .Callback<object?>(status => statuses.Add(status as ApprovalProgress));
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .Callback<DateTime, CancellationToken>((deadline, _) => deadlines.Add(deadline))
             .Returns(timer.Task);
@@ -121,10 +121,10 @@ public sealed class PlanApprovalTests
                 ? Task.FromResult(refused.Dequeue())
                 : new TaskCompletionSource<Decision>().Task);
 
-        Task<ApprovalResult> workflow = new PlanApproval().RunAsync(context.Object, Request);
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
 
         Assert.False(workflow.IsCompleted);
-        Assert.Equal([ApprovalNames.WaitingStatus], statuses);
+        Assert.Equal([Waiting], statuses);
         Assert.Equal([Start.AddMinutes(15)], deadlines);
         Assert.Equal(5, waits);
         Assert.False(eventToken.IsCancellationRequested);
@@ -136,7 +136,7 @@ public sealed class PlanApprovalTests
 
         Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
         Assert.True(eventToken.IsCancellationRequested);
-        Assert.Equal([ApprovalNames.WaitingStatus, "Timeout"], statuses);
+        Assert.Equal([Waiting, Waiting with { State = "Timeout", Completed = 1 }], statuses);
         context.Verify(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
@@ -152,7 +152,7 @@ public sealed class PlanApprovalTests
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Decision("finance", "Approve", 3));
 
-        ApprovalResult result = await new PlanApproval().RunAsync(context.Object, Request);
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
         Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
         context.Verify(item => item.CallActivityAsync<string>(
@@ -171,7 +171,7 @@ public sealed class PlanApprovalTests
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        ApprovalResult result = await new PlanApproval().RunAsync(context.Object, Request);
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
         Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
         Assert.True(eventToken.IsCancellationRequested);
@@ -194,7 +194,7 @@ public sealed class PlanApprovalTests
             .Returns(Task.FromException(new InvalidOperationException("Timer failed")));
 
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => new PlanApproval().RunAsync(context.Object, Request));
+            () => new ApprovalStep().RunAsync(context.Object, Request));
 
         Assert.Equal("Timer failed", error.Message);
         AssertWaitingWithoutApply(context);
@@ -212,7 +212,7 @@ public sealed class PlanApprovalTests
             .ReturnsAsync(new Decision("finance", "typo", 3))
             .Returns(new TaskCompletionSource<Decision>().Task);
 
-        Task<ApprovalResult> workflow = new PlanApproval().RunAsync(context.Object, Request);
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
         Assert.False(workflow.IsCompleted);
         timer.SetException(new InvalidOperationException("Timer failed"));
 
@@ -229,18 +229,18 @@ public sealed class PlanApprovalTests
             .ThrowsAsync(new InvalidOperationException("Submission failed"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => new PlanApproval().RunAsync(context.Object, Request));
+            () => new ApprovalStep().RunAsync(context.Object, Request));
 
         context.Verify(item => item.SetCustomStatus(It.IsAny<object?>()), Times.Never);
         context.Verify(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ApplyFailureIsNotReportedAsApprovalAndReceivesTheRequestedDelay()
+    public async Task ReviewerNeverCallsTheBusinessApplyActivity()
     {
         Mock<TaskOrchestrationContext> context = CreateContext();
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .Returns(new TaskCompletionSource().Task);
+            .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
         context.Setup(item => item.WaitForExternalEvent<Decision>(
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Decision("finance", "Approve", 3));
@@ -249,14 +249,134 @@ public sealed class PlanApprovalTests
                 It.IsAny<TaskOptions?>()))
             .ThrowsAsync(new InvalidOperationException("Apply failed"));
 
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => new PlanApproval().RunAsync(context.Object, Request with { ApplyDecisionDelaySeconds = 60 }));
-
-        Assert.Equal("Apply failed", error.Message);
-        context.Verify(item => item.SetCustomStatus("Approved"), Times.Never);
+        ApprovalResult result = await new ApprovalStep().RunAsync(
+            context.Object, Request with { ApplyDecisionDelaySeconds = 60 });
+        Assert.Equal(new ApprovalResult("Approved", 3, null), result);
         context.Verify(item => item.CallActivityAsync<string>(
-            nameof(ApplyDecision), new ApplyDecisionRequest("sunny-soda:v3:approved", 60),
-            It.IsAny<TaskOptions?>()), Times.Once);
+            nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("Approve", "Approved")]
+    [InlineData("Reject", "Rejected")]
+    public async Task ChainChildUsesItsStageAndNeverAppliesBusinessDecision(string outcome, string state)
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        ApprovalStepContext step = new("chain-001", "client", "account", "workflow", "policy", 2,
+            "Legal-review", 2, 3, "legal");
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", outcome, 3));
+
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request with { Step = step });
+
+        Assert.Equal(new ApprovalResult(state, 3, null), result);
+        context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Waiting", "Legal-review", 2, 3)), Times.Once);
+        context.Verify(item => item.SetCustomStatus(new ApprovalProgress(state, "Legal-review", 2, 3, 1)), Times.Once);
+        context.Verify(item => item.CallActivityAsync<string>(
+            nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ValidApprovalWaitsForTimerCancellationBeforeApplyingOrReturning()
+    {
+        Mock<ILogger> logger = new();
+        Mock<TaskOrchestrationContext> context = CreateContext(logger.Object);
+        TaskCompletionSource timer = new();
+        CancellationToken timerToken = default;
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Callback<DateTime, CancellationToken>((_, token) => timerToken = token)
+            .Returns(timer.Task);
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", "Approve", 3));
+
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
+
+        Assert.True(timerToken.IsCancellationRequested);
+        Assert.False(timer.Task.IsCompleted);
+        Assert.False(workflow.IsCompleted);
+        AssertWaitingWithoutApply(context);
+        timer.SetCanceled(timerToken);
+        Assert.Equal("Approved", (await workflow).Status);
+        Assert.True(timer.Task.IsCanceled);
+        VerifyLog(logger, LogLevel.Information, "approval timer canceled", Times.Once());
+        context.Verify(item => item.CreateTimer(Start.AddMinutes(15), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TimerFaultDuringCancellationIsNotSwallowedAsSuccessfulApproval()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        TaskCompletionSource timer = new();
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Returns(timer.Task);
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", "Approve", 3));
+
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
+        timer.SetException(new InvalidOperationException("Cancellation failed"));
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => workflow);
+        Assert.Equal("Cancellation failed", error.Message);
+        AssertWaitingWithoutApply(context);
+    }
+
+    [Fact]
+    public async Task DecisionWaitFailureStillCancelsAndDrainsTimerAndPropagates()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        Task timer = Task.CompletedTask;
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Returns<DateTime, CancellationToken>((_, token) => timer = CancelableTimer(token));
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .Throws(new InvalidOperationException("Event wait failed"));
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new ApprovalStep().RunAsync(context.Object, Request));
+
+        Assert.Equal("Event wait failed", error.Message);
+        Assert.True(timer.IsCanceled);
+        AssertWaitingWithoutApply(context);
+    }
+
+    [Theory]
+    [InlineData("parent")]
+    [InlineData("client")]
+    [InlineData("account")]
+    [InlineData("workflow")]
+    [InlineData("policy")]
+    [InlineData("version")]
+    [InlineData("stage")]
+    [InlineData("role")]
+    [InlineData("number")]
+    [InlineData("count")]
+    public async Task InvalidStepMetadataCannotBypassBusinessApplication(string invalid)
+    {
+        ApprovalStepContext step = new("chain-001", "client", null, "workflow", "policy", 1, "review", 1, 1, "finance");
+        step = invalid switch
+        {
+            "parent" => step with { ParentInstanceId = new string('p', 81) },
+            "client" => step with { ClientId = "" },
+            "account" => step with { AccountId = "bad/account" },
+            "workflow" => step with { WorkflowCode = "bad/code" },
+            "policy" => step with { PolicyId = "" },
+            "version" => step with { PolicyVersion = 0 },
+            "stage" => step with { Stage = "" },
+            "role" => step with { Role = "" },
+            "number" => step with { StageNumber = 2 },
+            _ => step with { StageCount = 11 }
+        };
+        Mock<TaskOrchestrationContext> context = CreateContext();
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(
+            () => new ApprovalStep().RunAsync(context.Object, Request with { Step = step }));
+
+        context.Verify(item => item.CallActivityAsync<string>(
+            It.IsAny<TaskName>(), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
+        context.Verify(item => item.SetCustomStatus(It.IsAny<object?>()), Times.Never);
     }
 
     [Fact]
@@ -315,7 +435,7 @@ public sealed class PlanApprovalTests
 
         Assert.Throws<ArgumentException>(request.Validate);
         await Assert.ThrowsAsync<ArgumentException>(
-            () => new PlanApproval().RunAsync(context.Object, request));
+            () => new ApprovalStep().RunAsync(context.Object, request));
         context.Verify(item => item.CallActivityAsync<string>(
             It.IsAny<TaskName>(), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -364,9 +484,9 @@ public sealed class PlanApprovalTests
 
     private static void AssertWaitingWithoutApply(Mock<TaskOrchestrationContext> context)
     {
-        context.Verify(item => item.SetCustomStatus(ApprovalNames.WaitingStatus), Times.Once);
+        context.Verify(item => item.SetCustomStatus(Waiting), Times.Once);
         context.Verify(item => item.SetCustomStatus(
-            It.Is<object?>(status => !Equals(status, ApprovalNames.WaitingStatus))), Times.Never);
+            It.Is<object?>(status => !Equals(status, Waiting))), Times.Never);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -390,8 +510,17 @@ public sealed class PlanApprovalTests
         context.Setup(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()))
             .ReturnsAsync("sunny-soda:v3:approved");
-        context.Setup(item => item.CreateReplaySafeLogger<PlanApproval>()).Returns(logger ?? NullLogger.Instance);
+        context.Setup(item => item.CreateReplaySafeLogger<ApprovalStep>()).Returns(logger ?? NullLogger.Instance);
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
         return context;
+    }
+
+    private static Task CancelableTimer(CancellationToken token)
+    {
+        TaskCompletionSource timer = new();
+        token.Register(() => timer.TrySetCanceled(token));
+        return timer.Task;
     }
 
     private sealed class FieldPayload

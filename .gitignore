@@ -6,3 +6,9 @@
 !.env.example
 .DS_Store
 env/azure.env
+approval_policies/local.json
+approval_policies/azure.json
+approval_policies/.policy-*.tmp
+approval_policies/.registry-*.tmp
+demo_settings/*.json
+demo_settings/.registry-*.tmp

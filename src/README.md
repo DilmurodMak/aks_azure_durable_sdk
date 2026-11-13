@@ -7,18 +7,35 @@ ms.topic: how-to
 
 ## Projects
 
-| Project                                    | Responsibility                                                                                        |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| [Approval.Worker](Approval.Worker/)        | Long-running host for `PlanApproval`, `RecordSubmission`, and `ApplyDecision`; runs locally or on AKS |
-| [Approval.Client](Approval.Client/)        | SDK client logic shared by the console; CLI commands `start`, `decide`, and `status`                  |
-| [Approval.Contracts](Approval.Contracts/)  | Request/decision/result types, explicit connection settings, and shared JSON options                  |
-| [Approval.Console](Approval.Console/)      | Local Console UI and HTTP endpoints; not deployed to AKS                                             |
-| [Approval.Tests](../tests/Approval.Tests/) | Workflow, converter, CLI, configuration, and HTTP tests                                               |
+| Project                                    | Responsibility                                                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| [Approval.Worker](Approval.Worker/)        | Hosts the policy-driven `ApprovalChain`, reusable `ApprovalStep` steps, and business activities locally or on AKS |
+| [Approval.Client](Approval.Client/) | SDK decision/status logic shared by the console; CLI commands `decide` and `status` |
+| [Approval.Contracts](Approval.Contracts/)  | Request/decision/result types, explicit connection settings, and shared JSON options                              |
+| [Approval.Console](Approval.Console/)      | Local Console UI and HTTP endpoints; not deployed to AKS                                                          |
+| [Approval.Tests](../tests/Approval.Tests/) | Workflow, converter, CLI, configuration, and HTTP tests                                                           |
 
-The [workflow](Approval.Worker/PlanApproval.cs) records submission, waits on a
+The [step workflow](Approval.Worker/ApprovalStep.cs) records submission, waits on a
 `Decision` event or one durable timer, and validates actor, outcome, and plan
 version. Invalid decisions keep waiting; valid rejection or timeout has no
-receipt. Approval calls `ApplyDecision`, a logged stand-in for a business update.
+receipt. Reviewers never apply the business update independently.
+The [chain workflow](Approval.Worker/ApprovalChain.cs) runs policy stages in order
+and role approvals within each stage in parallel. It waits for every outcome
+and calls `ApplyDecision` once only when all required approvals approve.
+These are not two competing approval engines: the parent coordinates the saved
+chain, and the child provides the reusable decision/timer behavior. Single-step
+and multi-step policies use the same parent/child pattern.
+
+The [policy registry](Approval.Console/PolicyStore.cs) saves immutable versions
+in root [approval_policies/](../approval_policies/): ignored `local.json` or
+`azure.json`. Saving creates and activates the new version atomically.
+Selecting an existing version in the UI activates it for its scope.
+Policies contain no actor assignments. The separate
+[simulator store](Approval.Console/DemoIdentityStore.cs) persists them in
+[demo_settings/](../demo_settings/), scoped by client/account.
+At each new start, the console resolves the active policy and current simulator assignments,
+then passes the complete resolved snapshot into the parent workflow; workers do not reread
+editable files. This is a local registry stand-in, not a production configuration service.
 
 ## Build and test
 
@@ -38,34 +55,49 @@ Warnings are errors; keep `packages.lock.json` files in source control.
 
 Use [the environment switch](../scripts/use-env.sh); do not change code between demos.
 
-| Process                      | ENDPOINT                 | TASKHUB          | SCHEDULER_AUTH     |
-| ---------------------------- | ------------------------ | ---------------- | ------------------ |
-| Local worker and Console UI  | `http://localhost:8080`  | `approval-local` | `None`             |
-| Local Console UI/CLI for Azure | Bicep Scheduler endpoint | `default`      | `AzureCli`         |
-| AKS worker                   | Same Azure endpoint      | `default`        | `WorkloadIdentity` |
+| Process                        | ENDPOINT                 | TASKHUB          | SCHEDULER_AUTH     |
+| ------------------------------ | ------------------------ | ---------------- | ------------------ |
+| Local worker and Console UI    | `http://localhost:8080`  | `approval-local` | `None`             |
+| Local Console UI/CLI for Azure | Bicep Scheduler endpoint | `default`        | `AzureCli`         |
+| AKS worker                     | Same Azure endpoint      | `default`        | `WorkloadIdentity` |
 
 Missing settings fail explicitly. Authentication `None` is loopback-only.
 The AKS webhook supplies the federated token settings; no secrets are committed.
 
 The [HTTP file](../approvals.http) targets the console, **not Scheduler directly**:
 
-| HTTP operation                         | Purpose                                              |
-| -------------------------------------- | ---------------------------------------------------- |
-| `GET /api/environment`                 | Confirm local/Azure endpoint and task hub            |
-| `POST /api/approvals`                  | Start a fresh instance; returns `201`                |
-| `GET /api/approvals`                   | List waiting approvals                               |
-| `POST /api/approvals/{id}/decision`    | Send a demo decision; `202` means sent, not approved |
-| `GET /api/approvals/{id}?history=true` | Read business status and durable history             |
+| HTTP operation                         | Purpose                                                       |
+| -------------------------------------- | ------------------------------------------------------------- |
+| `GET /api/environment`                 | Confirm local/Azure endpoint and task hub                     |
+| `GET /api/approvals`                   | List waiting approvals                                        |
+| `POST /api/approvals/{id}/decision`    | Send a demo decision; `202` means sent, not approved          |
+| `GET /api/approvals/{id}?history=true` | Read business status and durable history                      |
+| `GET /api/policies`                    | List saved versions and active selections                     |
+| `POST /api/policies` | Save changed content as a new active version (`201`); unchanged content returns the same version (`200`) |
+| `POST /api/policies/{id}/activate`     | Activate a version for new starts                             |
+| `POST /api/workflows`                  | Start a chain using the matching active policy                |
+| `GET /api/workflows/{id}`              | Read pinned policy, structured progress, and aggregate result |
+| `GET /api/workflows` | List workflow instances for the full approval-plan selector |
+| `GET /api/workflows/{id}/approvals` | Project every pinned step with stage/reviewer rank, state, and allowed actions |
+| `GET /api/demo-identities` | List simulator-only role assignments |
+| `POST /api/demo-identities` | Save simulator role assignments without changing policy versions |
 
 OpenAPI is at `/openapi/v1.json`. POST requests need JSON and
 `X-Approval-Console: spike`; the console accepts only local, same-origin traffic.
 Its **Acting as** field is not real approver authentication.
+It selects available role/user assignments from a workflow's pinned reviewers.
+The full plan shows future stages without starting them early; only actual waiting
+children in the parent's current group can receive a decision through the client/API.
 
 For the CLI, after selecting an environment:
 
 ```bash
 dotnet run --project src/Approval.Client -c Release --no-build -- --help
 ```
+
+The CLI can signal reviewer steps and inspect step/parent history. It cannot
+start a standalone reviewer. All business starts use `/api/workflows` and a policy,
+including policies with just one stage and one reviewer.
 
 See the [demo guide](../spike/README.md) for executable local and Azure examples.
 
@@ -99,4 +131,6 @@ with service account `durable-worker`, matching the Bicep federation.
 The [deployment script](../scripts/deploy-worker.sh) validates the context and
 immutable image digest, checks the manifest, and waits for rollout.
 
-Use fresh instances. There is one workflow, no migration/compatibility layer.
+The worker image registers the parent and reusable approval step once. Subsequent
+policy edits need no image rebuild, restart, or AKS update. New business activity
+types still require code. Use fresh instances; no migration/compatibility layer is included.

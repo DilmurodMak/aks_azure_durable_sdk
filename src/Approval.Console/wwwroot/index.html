@@ -8,41 +8,159 @@
   <script src="/console.js" defer></script>
 </head>
 <body>
-  <header><h1>Local Console UI <span id="environment">Connecting</span></h1>
-    <p>This page runs locally. Use it to start approvals and click Approve or Reject.
-      The Scheduler dashboard below is a separate page for watching workflow execution.</p>
-    <p id="endpoint"></p><p class="warning">SPIKE ONLY: "Acting as" is simulated, not Entra authentication.
-      Keep this console local. Never publish or port-forward it.</p>
-    <a id="dashboard" target="_blank" rel="noopener noreferrer">Open Scheduler dashboard</a>
-    <a href="/openapi/v1.json" target="_blank" rel="noopener noreferrer">OpenAPI</a>
-  </header>
-  <main>
-    <section><h2>Start approval</h2>
-      <form id="start">
-        <label>Instance ID<input name="instanceId" id="instance" required></label>
-        <label>Plan<input name="planId" value="sunny-soda" required></label>
-        <label>Version<input name="version" value="3" type="number" min="1" required></label>
-        <label>Requester<input name="requester" value="requester" required></label>
-        <label>Assigned approver<input name="approver" value="finance" required></label>
-        <label>Timeout (minutes)<input name="timeoutMinutes" value="15" type="number" min="0.001" max="1440" step="any" required></label>
-        <label>Apply step delay (seconds)<input name="applyDecisionDelaySeconds" value="0" type="number" min="0" max="60" required></label>
-        <button type="submit">Start</button>
-      </form>
-    </section>
-    <section><h2>Waiting approvals</h2>
-      <label>Acting as (demo only)<select id="actor">
-        <option>finance</option><option>requester</option><option>someone-else</option>
-      </select></label>
-      <label>Decision version override (blank = plan version)<input id="decision-version" type="number" min="1"></label>
-      <button id="refresh" type="button">Refresh</button>
-      <p>Invalid actors, versions, or outcomes are refused by the workflow. It stays waiting until a valid decision or the original deadline.</p>
-      <table><thead><tr><th>Instance</th><th>Plan/version</th><th>Assigned approver</th><th>Actions</th></tr></thead><tbody id="approvals"></tbody></table>
-    </section>
-    <section><h2>Status and history</h2>
-      <form id="status"><label>Instance ID<input id="status-id" required></label>
-        <button type="submit">Get status + history</button></form>
-      <p id="message" role="status"></p><pre id="result"></pre>
-    </section>
-  </main>
+  <svg class="icon-library" aria-hidden="true" focusable="false">
+    <symbol id="icon-flow" viewBox="0 0 24 24"><path d="M5 8v8m14-8v8M5 12h14"/><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/><circle cx="8" cy="5" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="19" r="2"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8Z"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 8a7 7 0 0 1 12-3l3 3M4 16l3 3a7 7 0 0 0 12-3"/></symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6"/></symbol>
+    <symbol id="icon-save" viewBox="0 0 24 24"><path d="M4 3h13l4 4v14H3V3Zm3 0v6h10V3M7 21v-8h10v8"/></symbol>
+    <symbol id="icon-example" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol>
+    <symbol id="icon-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+    <symbol id="icon-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></symbol>
+  </svg>
+  <div class="shell">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#icon-flow"/></svg></span>
+        <div><p class="eyebrow">DURABLE APPROVAL SPIKE</p><h1>Local Console UI</h1></div>
+        <span id="environment" class="badge">Connecting</span>
+      </div>
+      <nav class="header-links" aria-label="External resources">
+        <a id="dashboard" target="_blank" rel="noopener noreferrer">Scheduler dashboard <svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+        <a href="/openapi/v1.json" target="_blank" rel="noopener noreferrer">OpenAPI</a>
+      </nav>
+    </header>
+    <p id="endpoint" class="connection"></p>
+    <aside class="notice"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>
+      <span><strong>Simulation only.</strong> Actors are demo identities. No email or Teams notifications are sent.
+        Keep this console local; do not publish or port-forward it.</span></aside>
+    <p id="message" class="message" role="status" aria-live="polite">Connecting to Scheduler...</p>
+
+    <div class="tabs" role="tablist" aria-label="Approval demo">
+      <button id="tab-policies" type="button" role="tab" aria-selected="true" aria-controls="panel-policies" data-panel="policies">
+        <svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg>1. Policies</button>
+      <button id="tab-start" type="button" role="tab" aria-selected="false" aria-controls="panel-start" data-panel="start" tabindex="-1">
+        <svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg>2. Start workflow</button>
+      <button id="tab-approvals" type="button" role="tab" aria-selected="false" aria-controls="panel-approvals" data-panel="approvals" tabindex="-1">
+        <svg class="icon" aria-hidden="true"><use href="#icon-check"/></svg>3. Approvals <span id="waiting-count" class="count">0</span></button>
+      <button id="tab-identities" type="button" role="tab" aria-selected="false" aria-controls="panel-identities" data-panel="identities" tabindex="-1">
+        <svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg>Demo identities</button>
+    </div>
+
+    <main>
+      <section id="panel-policies" class="panel" role="tabpanel" aria-labelledby="tab-policies">
+        <div class="section-heading"><div><h2>Configure once. Reuse for every start.</h2>
+          <p>Saving makes the new version active. Selecting an existing version activates it for its client, account, and workflow.</p></div>
+          <div class="editor-actions">
+            <button id="edit-policy" type="button" hidden><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg>Edit</button>
+            <button id="new-policy" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>New policy</button>
+          </div></div>
+        <div class="policy-picker">
+          <label>Saved policy version<select id="policies"><option value="">Create a new policy</option></select></label>
+          <span id="policy-badge" class="badge subtle">Not saved</span>
+        </div>
+        <form id="policy-editor">
+          <input name="baseVersion" type="hidden" value="0">
+          <fieldset id="policy-fields">
+          <div class="policy-workspace">
+            <div class="policy-details">
+              <h3>Policy details</h3>
+              <label>Policy ID<input name="id" placeholder="sunny-gate2" required maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+              <label>Client ID<input name="clientId" value="CLI-SUNNY" required maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+              <label>Account <span class="optional">optional</span><input name="accountId" placeholder="All accounts" maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+              <label>Business step / workflow<input name="workflowCode" value="Gate2" required maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+              <p class="hint">Use letters, numbers, and hyphens. To change scope, create a new policy.</p>
+              <p class="hint">Example: Gate2 is the tactical-plan approval step (B07) in business phase P3. The reusable pattern is Approval &amp; sign-off.</p>
+              <div class="example-card"><svg class="icon" aria-hidden="true"><use href="#icon-example"/></svg>
+                <h3>Try a sample chain</h3><p>Lead review, Finance + Legal together, then Client sign-off.</p>
+                <button id="load-example" type="button">Use example</button></div>
+            </div>
+            <div class="stage-builder">
+              <div class="section-heading"><div><h3>Approval stages</h3>
+                <p>Stages run in order. Reviewers in the same stage can respond in any order.</p></div></div>
+              <div id="stages"></div>
+              <button id="add-stage" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>Add next stage</button>
+              <p class="hint">Policies contain roles, not people. Assign simulated users separately in Demo identities. A stage is a reviewer checkpoint, not a campaign phase.</p>
+            </div>
+          </div>
+          </fieldset>
+          <footer class="save-bar"><div><p id="policy-message" role="status">Create or select a policy to get started.</p>
+            <p class="hint">Stored in <code id="policy-location">approval_policies/</code>. Existing runs keep their original snapshot.</p></div>
+            <div class="editor-actions">
+              <button id="cancel-edit" type="button" hidden>Cancel</button>
+              <button id="policy-action" type="submit" class="primary"><svg class="icon" aria-hidden="true"><use id="policy-action-icon" href="#icon-save"/></svg><span id="policy-action-label">Save &amp; activate</span></button>
+            </div></footer>
+        </form>
+      </section>
+
+      <section id="panel-start" class="panel" role="tabpanel" aria-labelledby="tab-start" hidden>
+        <div class="section-heading"><div><h2>Start with the active policy</h2>
+          <p>The correct chain is resolved from the client, account, and workflow. You do not re-enter approval steps.</p></div></div>
+        <p id="start-policy-hint" class="selection-summary">Select or save a policy first.</p>
+        <form id="chain-start" class="form-grid">
+          <label>Workflow instance ID<input name="instanceId" id="chain-instance" required></label>
+          <label>Client ID<input name="clientId" value="CLI-SUNNY" required></label>
+          <label>Account <span class="optional">optional</span><input name="accountId" placeholder="All accounts"></label>
+          <label>Business step / workflow<input name="workflowCode" value="Gate2" required></label>
+          <label>Plan<input name="planId" value="sunny-soda" required></label>
+          <label>Plan version<input name="version" value="3" type="number" min="1" required></label>
+          <label>Requester <span class="optional">demo actor</span><input name="requester" value="requester" required></label>
+          <div class="form-action"><button type="submit" class="primary"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg>Start workflow</button></div>
+        </form>
+        <div class="explanation"><h3>One reusable approval engine</h3>
+          <p><code>ApprovalChain</code> coordinates the stages; each reviewer gets an internal <code>ApprovalStep</code>.
+            A single reviewer and a multi-stage sign-off use the same engine. The parent applies the final result once all required steps finish.</p></div>
+      </section>
+
+      <section id="panel-approvals" class="panel" role="tabpanel" aria-labelledby="tab-approvals" hidden>
+        <div class="section-heading"><div><h2>Approval plan and decisions</h2><p>Same group = parallel. The next group unlocks only after the previous group finishes.</p></div>
+          <button id="refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>Refresh</button></div>
+        <label class="workflow-selector">Workflow to inspect<select id="approval-workflow"><option value="">All waiting approvals</option></select></label>
+        <p id="approval-plan-note" class="hint">Ranks 1.1 and 1.2 run together; 2.1 waits for all of group 1. Completed steps stay visible in a selected workflow.</p>
+        <div class="review-controls">
+          <label>Acting as <span class="optional">demo role assignment</span>
+            <select id="actor"><option value="">Select a demo user</option></select></label>
+          <label>Decision version override <span class="optional">for stale-version tests</span><input id="decision-version" type="number" min="1" placeholder="Use plan version"></label>
+          <p class="hint">Wrong actor, self-approval, stale version, or a typo is refused. The original timer continues.</p>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>Rank</th><th>Approval / parent</th><th>Plan</th><th>Stage / state</th><th>Role / actor</th><th>Actions</th></tr></thead><tbody id="approvals"></tbody></table></div>
+        <div class="status-forms">
+          <form id="chain-status"><h3>Workflow progress</h3><label>Parent workflow ID<input id="chain-status-id" required placeholder="chain-demo-..."></label>
+            <button type="submit">View pinned policy &amp; result</button></form>
+          <form id="status"><h3>Approval history</h3><label>Approval instance ID<input id="status-id" required placeholder="chain-demo-...-s1-r1"></label>
+            <button type="submit">View status &amp; history</button></form>
+        </div>
+      </section>
+      <section id="panel-identities" class="panel" role="tabpanel" aria-labelledby="tab-identities" hidden>
+        <div class="section-heading"><div><h2>Demo identities, not policy configuration</h2>
+          <p>This simulates User Administration. In production, a role service assigns people and a validated sign-in identifies the acting user. Sign-in alone never grants approval rights.</p></div></div>
+        <form id="identity-editor">
+          <div class="form-grid">
+            <label>Client ID<input name="clientId" value="CLI-SUNNY" required maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+            <label>Account <span class="optional">optional</span><input name="accountId" placeholder="All accounts" maxlength="80" pattern="[A-Za-z0-9\-]+"></label>
+            <div class="form-action"><button id="load-identities" type="button">Load assignments</button></div>
+          </div>
+          <p class="hint">Changing these assignments affects new starts, not a running workflow's already-resolved reviewers. It never creates a policy version.</p>
+          <div class="simulator-actions">
+            <button id="use-policy-roles" type="button">Add roles from current policy</button>
+            <button id="identity-example" type="button">Use example actors</button>
+          </div>
+          <div id="identity-rows"></div>
+          <button id="add-identity" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>Add demo assignment</button>
+          <footer class="save-bar"><p id="identity-message" role="status">Saved separately under demo_settings/. No real authentication is implemented.</p>
+            <button type="submit" class="primary"><svg class="icon" aria-hidden="true"><use href="#icon-save"/></svg>Save demo identities</button></footer>
+        </form>
+      </section>
+      <section id="result-section" class="result-panel" aria-label="Latest request result">
+        <h2><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>Latest result</h2>
+        <pre id="result">Start a workflow or inspect an approval to see its result here.</pre>
+      </section>
+    </main>
+  </div>
 </body>
 </html>

@@ -6,23 +6,21 @@ namespace Approval.Client;
 public sealed record ClientCommand(
     string Name,
     string InstanceId,
-    ApprovalRequest? Request = null,
     Decision? Decision = null,
-    bool IncludeHistory = false,
-    string Source = "cli")
+    bool IncludeHistory = false)
 {
     public const string Usage = """
-        start  --instance ID --plan PLAN --version N --requester ID --approver ID [--timeout-minutes 15] [--apply-delay-seconds 0]
         decide --instance ID --approver ID --version N --outcome Approve|Reject
         status --instance ID [--history]
+        Start all workflows through POST /api/workflows or the Local Console UI using a saved policy.
         Only exact Approve or Reject completes. Invalid decisions are refused and the workflow keeps waiting.
         """;
 
     public static ClientCommand Parse(string[] args)
     {
-        if (args.Length == 0 || args[0] is not ("start" or "decide" or "status"))
+        if (args.Length == 0 || args[0] is not ("decide" or "status"))
         {
-            throw new ArgumentException("Expected start, decide, or status.");
+            throw new ArgumentException("Expected decide or status. Start workflows through the console using a saved policy.");
         }
 
         Dictionary<string, string> values = new(StringComparer.Ordinal);
@@ -53,7 +51,6 @@ public sealed record ClientCommand(
 
         string[] allowed = args[0] switch
         {
-            "start" => ["--instance", "--plan", "--version", "--requester", "--approver", "--timeout-minutes", "--apply-delay-seconds"],
             "decide" => ["--instance", "--approver", "--version", "--outcome"],
             _ => ["--instance", "--history"]
         };
@@ -84,28 +81,8 @@ public sealed record ClientCommand(
         }
 
         string approver = Required(values, "--approver");
-        if (args[0] == "decide")
-        {
-            return new ClientCommand("decide", instanceId,
-                Decision: new Decision(approver, Required(values, "--outcome"), version));
-        }
-
-        string timeoutValue = values.GetValueOrDefault("--timeout-minutes", "15");
-        if (!double.TryParse(timeoutValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double timeoutMinutes))
-        {
-            throw new ArgumentException("--timeout-minutes must be a number.");
-        }
-
-        if (!int.TryParse(values.GetValueOrDefault("--apply-delay-seconds", "0"),
-            NumberStyles.None, CultureInfo.InvariantCulture, out int delay))
-        {
-            throw new ArgumentException("--apply-delay-seconds must be an integer from 0 to 60.");
-        }
-
-        ApprovalRequest request = new(
-            Required(values, "--plan"), version, Required(values, "--requester"), approver, timeoutMinutes, delay);
-        request.Validate();
-        return new ClientCommand("start", instanceId, request);
+        return new ClientCommand("decide", instanceId,
+            Decision: new Decision(approver, Required(values, "--outcome"), version));
     }
 
     private static string Required(Dictionary<string, string> values, string option)

@@ -62,6 +62,6 @@ catch (AuthenticationFailedException exception)
 }
 catch (OperationCanceledException)
 {
-    Console.Error.WriteLine("Request canceled or exceeded the 60-second client deadline. Query status before retrying a start or decision.");
+    Console.Error.WriteLine("Request canceled or exceeded the 60-second client deadline. Query status before retrying a decision.");
     return 1;
 }

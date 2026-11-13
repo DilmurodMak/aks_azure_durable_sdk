@@ -27,7 +27,8 @@ builder.Services.AddDurableTaskWorker()
     .Configure(options => options.DataConverter = new JsonDataConverter(ApprovalJson.CreateSerializerOptions()))
     .AddTasks(tasks =>
     {
-        tasks.AddOrchestrator<PlanApproval>();
+        tasks.AddOrchestrator<ApprovalStep>();
+        tasks.AddOrchestrator<ApprovalChain>();
         tasks.AddActivity<RecordSubmission>();
         tasks.AddActivity<ApplyDecision>();
     })

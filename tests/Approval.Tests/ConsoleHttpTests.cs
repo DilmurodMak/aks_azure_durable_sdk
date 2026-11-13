@@ -18,23 +18,31 @@ public sealed class ConsoleHttpTests
         Mock<IApprovalConsoleService> service = new();
         service.Setup(item => item.ListAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<WaitingApprovalResponse>());
-        service.Setup(item => item.StartAsync(It.IsAny<CreateApprovalRequest>(), It.IsAny<CancellationToken>()))
+        Mock<IApprovalChainService> chain = new();
+        chain.Setup(item => item.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<WorkflowSummaryResponse>());
+        chain.Setup(item => item.StepsAsync("console-test", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<WorkflowApprovalResponse>());
+        chain.Setup(item => item.StartAsync(It.IsAny<StartChainRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new { instanceId = "console-test" });
         service.Setup(item => item.DecideAsync("console-test", It.IsAny<DecisionForm>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new { status = "DecisionSentNotYetApplied" });
         service.Setup(item => item.StatusAsync("missing", false, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new KeyNotFoundException());
-        await using ConsoleFactory factory = new(service.Object);
+        await using ConsoleFactory factory = new(service.Object, chain.Object);
         using HttpClient client = factory.CreateClient(new() { BaseAddress = new Uri("http://127.0.0.1:5080") });
         client.DefaultRequestHeaders.Add("X-Approval-Console", "spike");
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/approvals")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/workflows")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/workflows/console-test/approvals")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/openapi/v1.json")).StatusCode);
-        var start = new { instanceId = "console-test", planId = "sunny-soda", version = 3, requester = "requester", approver = "finance" };
-        HttpResponseMessage created = await client.PostAsJsonAsync("/api/approvals", start);
+        var start = new { instanceId = "console-test", planId = "sunny-soda", version = 3, requester = "requester", clientId = "client", workflowCode = "Gate2" };
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.PostAsJsonAsync("/api/approvals", start)).StatusCode);
+        HttpResponseMessage created = await client.PostAsJsonAsync("/api/workflows", start);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        Assert.Equal("/api/approvals/console-test", created.Headers.Location?.OriginalString);
+        Assert.Equal("/api/workflows/console-test", created.Headers.Location?.OriginalString);
         Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/approvals/console-test/decision",
             new { actingAs = "finance", outcome = "Approve", version = 3 })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/approvals/console-test/decision",
@@ -44,16 +52,16 @@ public sealed class ConsoleHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/approvals/missing")).StatusCode);
 
         client.DefaultRequestHeaders.Remove("X-Approval-Console");
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/approvals", start)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/workflows", start)).StatusCode);
         client.DefaultRequestHeaders.Add("X-Approval-Console", "spike");
         client.DefaultRequestHeaders.Add("Origin", "https://unrelated.invalid");
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/approvals", start)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/workflows", start)).StatusCode);
         client.DefaultRequestHeaders.Remove("Origin");
         client.DefaultRequestHeaders.Host = "unrelated.invalid";
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/approvals")).StatusCode);
     }
 
-    private sealed class ConsoleFactory(IApprovalConsoleService service) : WebApplicationFactory<Program>
+    private sealed class ConsoleFactory(IApprovalConsoleService service, IApprovalChainService chain) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -64,6 +72,8 @@ public sealed class ConsoleHttpTests
             {
                 services.RemoveAll<IApprovalConsoleService>();
                 services.AddSingleton(service);
+                services.RemoveAll<IApprovalChainService>();
+                services.AddSingleton(chain);
                 services.AddTransient<IStartupFilter, LoopbackTestFilter>();
             });
         }
