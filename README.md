@@ -24,22 +24,22 @@ The test request is "Sunny Soda, plan version 3." We check:
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Azure, provisioned by Bicep | AKS with two fixed nodes, ACR, VNet/NAT egress, managed identities/RBAC, and Durable Task Scheduler with task hub `default` |
 | AKS, deployed separately    | One containerized approval worker using workload identity                                                                   |
-| Laptop                      | Approval console/HTTP endpoints and optional CLI                                                                            |
-| Docker on the laptop        | Scheduler emulator and its dashboard, using task hub `approval-local`                                                       |
+| Local machine               | Local Console UI/HTTP endpoints and optional CLI                                                                            |
+| Local Docker Desktop        | Scheduler emulator and its dashboard, using task hub `approval-local`                                                       |
 
 ```text
-Local: HTTP file/buttons -> laptop console -> emulator       <-> laptop worker
-Cloud: HTTP file/buttons -> laptop console -> Azure Scheduler <-> AKS worker
+Local: HTTP file/buttons -> Local Console UI -> emulator       <-> local worker
+Cloud: HTTP file/buttons -> Local Console UI -> Azure Scheduler <-> AKS worker
 ```
 
-Only the worker is deployed to AKS. The demo console stays on your laptop.
+Only the worker is deployed to AKS. The Local Console UI always runs locally.
 Scheduler stores workflow state; the worker executes orchestrators and activities.
 
 ## Start here
 
 | Guide                                   | Use it for                                                                            |
 | --------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Demo and tests](spike/README.md)       | Local emulator demo, laptop-to-Azure demo, HTTP requests, dashboards, and pass checks |
+| [Demo and tests](spike/README.md)       | Local emulator demo, local-to-Azure demo, HTTP requests, dashboards, and pass checks |
 | [Source code](src/README.md)            | Project map, build/test commands, HTTP/CLI interfaces, and worker image deployment    |
 | [Azure infrastructure](infra/README.md) | Bicep provisioning, access configuration, costs, and cleanup                          |
 | [HTTP requests](approvals.http)         | Start an approval, send a decision, and inspect its status/history                    |
@@ -48,13 +48,12 @@ Scheduler stores workflow state; the worker executes orchestrators and activitie
 
 | URL                                                           | What you see                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| <http://localhost:5080>                                       | Our approval console connected to the local emulator               |
+| <http://localhost:5080>                                       | Local Console UI connected to the local emulator                  |
 | <http://localhost:8082>                                       | Microsoft's local Scheduler dashboard                              |
-| <http://localhost:5081>                                       | Our laptop console connected to Azure Scheduler and the AKS worker |
+| <http://localhost:5081>                                       | Local Console UI connected to Azure Scheduler and the AKS worker   |
 | The console's **Open Scheduler dashboard** link in Azure mode | Microsoft's Azure dashboard, using your Entra sign-in              |
 
-`localhost` and `127.0.0.1` both mean your laptop. These URLs work after
-starting the services in the [demo guide](spike/README.md).
+These URLs work after starting the services in the [demo guide](spike/README.md).
 The local dashboard does **not** show Azure runs.
 
 ## Boundaries

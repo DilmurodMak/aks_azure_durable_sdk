@@ -12,7 +12,7 @@ ms.topic: how-to
 | [Approval.Worker](Approval.Worker/)        | Long-running host for `PlanApproval`, `RecordSubmission`, and `ApplyDecision`; runs locally or on AKS |
 | [Approval.Client](Approval.Client/)        | SDK client logic shared by the console; CLI commands `start`, `decide`, and `status`                  |
 | [Approval.Contracts](Approval.Contracts/)  | Request/decision/result types, explicit connection settings, and shared JSON options                  |
-| [Approval.Console](Approval.Console/)      | Laptop-only demo page and HTTP endpoints; not deployed to AKS                                         |
+| [Approval.Console](Approval.Console/)      | Local Console UI and HTTP endpoints; not deployed to AKS                                             |
 | [Approval.Tests](../tests/Approval.Tests/) | Workflow, converter, CLI, configuration, and HTTP tests                                               |
 
 The [workflow](Approval.Worker/PlanApproval.cs) records submission, waits on a
@@ -40,8 +40,8 @@ Use [the environment switch](../scripts/use-env.sh); do not change code between 
 
 | Process                      | ENDPOINT                 | TASKHUB          | SCHEDULER_AUTH     |
 | ---------------------------- | ------------------------ | ---------------- | ------------------ |
-| Local worker and console     | `http://localhost:8080`  | `approval-local` | `None`             |
-| Laptop console/CLI for Azure | Bicep Scheduler endpoint | `default`        | `AzureCli`         |
+| Local worker and Console UI  | `http://localhost:8080`  | `approval-local` | `None`             |
+| Local Console UI/CLI for Azure | Bicep Scheduler endpoint | `default`      | `AzureCli`         |
 | AKS worker                   | Same Azure endpoint      | `default`        | `WorkloadIdentity` |
 
 Missing settings fail explicitly. Authentication `None` is loopback-only.

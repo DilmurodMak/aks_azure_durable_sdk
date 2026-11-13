@@ -109,7 +109,7 @@ done
 
 Replace the placeholders before running these commands. `AZURE_CLIENT_IP` must
 be the public IPv4 address seen by Azure for your approved network or VPN exit,
-not a private laptop address. Supply the address only, without `/32` or another
+not a private local-machine address. Supply the address only, without `/32` or another
 CIDR suffix. The template constructs exact-host allowlist entries.
 
 ```bash
@@ -252,7 +252,7 @@ then the [local and Azure demos](../spike/README.md). Acceptance runs cover
 approval after pod replacement, timeout, and a refused stale decision followed
 by valid approval. This is a green-deployment spike with one `PlanApproval`
 workflow and local task hub `approval-local`.
-The AKS worker uses `Authentication=WorkloadIdentity`; the laptop client uses
+The AKS worker uses `Authentication=WorkloadIdentity`; the local client uses
 `Authentication=AzureCli`. Neither uses stored credentials or an implicit
 emulator fallback.
 

@@ -5,10 +5,10 @@ cd "$(dirname "$0")/.."
 : "${AKS_CLUSTER_NAME:?Set AKS_CLUSTER_NAME to the approved spike cluster.}"
 : "${ENDPOINT:?Set ENDPOINT to the Azure Scheduler endpoint.}"
 : "${TASKHUB:?Set TASKHUB to its task hub.}"
-: "${SCHEDULER_AUTH:?Set SCHEDULER_AUTH=AzureCli for the laptop client.}"
+: "${SCHEDULER_AUTH:?Set SCHEDULER_AUTH=AzureCli for the local client.}"
 if [ "$SCHEDULER_AUTH" != AzureCli ] ||
    [ "$(kubectl config current-context)" != "$AKS_CLUSTER_NAME" ]; then
-  printf 'ERROR: Use the laptop AzureCli identity and the approved Kubernetes context.\n' >&2
+  printf 'ERROR: Use the local AzureCli identity and the approved Kubernetes context.\n' >&2
   exit 2
 fi
 

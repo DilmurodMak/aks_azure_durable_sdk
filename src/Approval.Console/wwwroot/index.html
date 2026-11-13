@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Approval spike console</title>
+  <title>Local Console UI</title>
   <link rel="stylesheet" href="/console.css">
   <script src="/console.js" defer></script>
 </head>
 <body>
-  <header><h1>Approval spike console <span id="environment">Connecting</span></h1>
-    <p>This page runs on your laptop. Use it to start approvals and click Approve or Reject.
+  <header><h1>Local Console UI <span id="environment">Connecting</span></h1>
+    <p>This page runs locally. Use it to start approvals and click Approve or Reject.
       The Scheduler dashboard below is a separate page for watching workflow execution.</p>
     <p id="endpoint"></p><p class="warning">SPIKE ONLY: "Acting as" is simulated, not Entra authentication.
-      Keep this console on your laptop. Never publish or port-forward it.</p>
+      Keep this console local. Never publish or port-forward it.</p>
     <a id="dashboard" target="_blank" rel="noopener noreferrer">Open Scheduler dashboard</a>
     <a href="/openapi/v1.json" target="_blank" rel="noopener noreferrer">OpenAPI</a>
   </header>

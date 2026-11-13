@@ -7,7 +7,7 @@ ms.topic: how-to
 
 ## Before the demo
 
-Run all commands from the repository root. Install Docker, the .NET SDK in
+Run all commands from the repository root. Install local Docker Desktop, the .NET SDK in
 [global.json](../global.json), and `jq`; Azure also needs Azure CLI.
 Complete the [build steps](../src/README.md#build-and-test).
 If these services are already running, reuse them instead of starting duplicates.
@@ -18,10 +18,12 @@ The same `PlanApproval` workflow runs in both demos. `approval-local` and
 ## Demo 1: everything local
 
 ```text
-HTTP file -> laptop console :5080 -> Docker emulator :8080 <-> laptop worker
-                                          |
-                               local dashboard :8082
+HTTP file -> Local Console UI :5080 -> emulator :8080 <-> local worker
+                                         |
+                              local dashboard :8082
 ```
+
+The emulator and its dashboard run in local Docker Desktop.
 
 Terminal 1:
 
@@ -50,15 +52,15 @@ Client. Keep `@base = http://127.0.0.1:5080` and choose a fresh `@instance`.
 5. Send **Approve**, then status again: expect `Approved`, version `3`,
    receipt `sunny-soda:v3:approved`. Watch the event and apply step in the dashboard.
 
-For buttons instead of HTTP, use [our local console](http://localhost:5080).
+For buttons instead of HTTP, use the [Local Console UI](http://localhost:5080).
 The **Acting as** dropdown can demonstrate wrong-approver/self-approval refusals.
 Run Reject on a separate fresh instance; do not approve and reject the same run.
 
-Docker keeps the emulator/dashboard running after a terminal closes. Its
+Local Docker Desktop keeps the emulator/dashboard running after a terminal closes. Its
 state is **in memory**: restarting/recreating it clears instances.
 `docker compose stop emulator` stops it deliberately.
 
-## Demo 2: test the cloud worker from your laptop
+## Demo 2: test the cloud worker locally
 
 First complete [Azure provisioning](../infra/README.md) and
 [worker deployment](../src/README.md#deploy-the-worker-to-aks).
@@ -66,9 +68,9 @@ AKS and its worker must be running. Use an account with the configured task-hub
 permissions, and keep your current public IP on the allowlists.
 
 ```text
-HTTP file -> laptop console :5081 -> Azure Scheduler <-> AKS worker
-                                          |
-                              Azure dashboard in your browser
+HTTP file -> Local Console UI :5081 -> Azure Scheduler <-> AKS worker
+                                           |
+                               Azure dashboard in your browser
 ```
 
 In a new terminal:
@@ -91,20 +93,20 @@ deployment and writes ignored `env/azure.env`. No endpoint or token is hard-code
    and use a new instance ID.
 2. Send **Environment**: confirm `AZURE`, the actual Azure endpoint, and `default`.
 3. Repeat Start, status, stale refusal, valid approval, and status from Demo 1.
-4. Open [our Azure-connected console](http://localhost:5081), then
+4. Open the [Local Console UI connected to Azure](http://localhost:5081), then
    **Open Scheduler dashboard**. Alternatively, open the printed
    `DASHBOARD_URL`. Sign in with your authorized Entra account.
 5. Find the same instance and inspect its events, result, and connected worker.
-   The workflow is processed by the AKS pod, not a laptop worker.
+   The workflow is processed by the AKS pod, not a local worker.
 
-Yes, you are testing AKS **from your laptop**: the console's SDK connects to
+You are testing AKS **from your local machine**: the Local Console UI's SDK connects to
 Azure Scheduler, which dispatches work to the AKS worker. The `.http` file
 calls the console's HTTP endpoints; Scheduler communication uses the SDK.
 No AKS ingress or `kubectl port-forward` is needed for this path.
 
 The emulator dashboard at port 8082 only shows **local** runs. It is not a
 proxy for Azure. Use the actual Azure dashboard link for cloud runs.
-Do not start a laptop worker against the Azure hub while AKS is consuming it.
+Do not start a local worker against the Azure hub while AKS is consuming it.
 Switching shell settings does not change an already-running process.
 
 ## What to check
@@ -144,8 +146,8 @@ Pod Ready is not proof of Scheduler connection; measure actual workflow resume.
 
 ## Limits
 
-**Acting as is a simulation, not authentication.** Keep both consoles on your
-laptop. `ApplyDecision` logs a stand-in receipt, not a duplicate-safe business
+**Acting as is a simulation, not authentication.** Keep both Console UI instances
+local. `ApplyDecision` logs a stand-in receipt, not a duplicate-safe business
 update. Policy chains, Teams, audit storage, trace backends, and load are later.
 Remote dashboard UI verification still requires browser sign-in; successful SDK
 tests alone are not dashboard proof. Data Contributor can terminate/purge and
