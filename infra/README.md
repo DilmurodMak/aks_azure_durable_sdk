@@ -1,7 +1,7 @@
 ---
 title: Deploy the AKS Durable Task SDK spike infrastructure
 description: Bicep deployment instructions for an isolated AKS, registry, managed identity, restricted network and Durable Task Scheduler stack.
-ms.date: 2026-11-12
+ms.date: 2026-11-13
 ms.topic: how-to
 ---
 
@@ -16,7 +16,7 @@ SDK spike. This is not a Functions-runtime deployment.
 | Container registry | Standard SKU; admin credentials and anonymous pulls disabled; kubelet receives AcrPull            |
 | Network            | Dedicated VNet/subnet, NAT gateway and static outbound IPv4 address                               |
 | Scheduler          | Durable Task Scheduler Consumption SKU and a `default` task hub                                   |
-| Worker identity    | User-assigned managed identity, federated to the future worker service account                    |
+| Worker identity    | User-assigned managed identity, federated to the SDK worker service account                       |
 | Operator access    | AKS RBAC Cluster Admin on this cluster; Durable Task Data Contributor on this task hub            |
 
 Scheduler and the AKS API server accept only the supplied client IPv4 addresses

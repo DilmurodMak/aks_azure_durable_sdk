@@ -112,10 +112,8 @@ If k9s shows `Context: n/a` or DNS errors, check AKS is running first.
 
 ```bash
 export IMAGE_TAG="sunny-soda-$(date -u +%Y%m%d%H%M%S)"
-docker buildx build --platform linux/amd64 --load \
-  --tag "$REGISTRY_LOGIN_SERVER/approval-worker:$IMAGE_TAG" .
-az acr login --name "$REGISTRY_NAME"
-docker push "$REGISTRY_LOGIN_SERVER/approval-worker:$IMAGE_TAG"
+az acr build --registry "$REGISTRY_NAME" --platform linux/amd64 \
+  --image "approval-worker:$IMAGE_TAG" --file Dockerfile .
 digest="$(az acr repository show --name "$REGISTRY_NAME" \
   --image "approval-worker:$IMAGE_TAG" --query digest --output tsv)"
 export WORKER_IMAGE="$REGISTRY_LOGIN_SERVER/approval-worker@$digest"
@@ -123,6 +121,9 @@ bash scripts/deploy-worker.sh
 ```
 
 The [Dockerfile](../Dockerfile) runs as a non-root user.
+To use the Microsoft NuGet mirror during the container build, add
+`--build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json`.
+It can also be built locally with `docker buildx build --platform linux/amd64`.
 The [manifest](../deploy/worker.yaml) uses one fixed replica, resource limits,
 and 60 seconds for graceful termination. Its namespace/service account match
 `system:serviceaccount:durable-spike:durable-worker`.
@@ -179,6 +180,25 @@ Runtime `Completed` alone is not approval. Inspect the business result.
 View the same instance in Scheduler's dashboard; SDK-exported history is
 also captured. Each run writes IDs, pod names, history, logs, and timings
 under `.build/evidence/<prefix>/`. Do not commit credentials or tokens.
+
+## Verified on 2026-11-13
+
+All 38 unit tests passed. The emulator, laptop-to-Azure worker/client, and
+the published non-root container were validated before AKS deployment.
+The three AKS runs completed at `17:07:45Z`:
+
+| Instance                     | Result                                    |
+| ---------------------------- | ----------------------------------------- |
+| `sunny-soda-v3-001`           | `Approved`, version 3, expected receipt    |
+| `sunny-soda-v3-timeout-001`   | `Timeout`, no receipt or apply activity    |
+| `sunny-soda-v3-stale-001`     | `RejectedStaleVersion`, no receipt or apply |
+
+Worker pod suffix changed from `4zdps` to `nd8zl`; the instance ID did not
+change. Measured wait, replacement, and resume were 4 seconds each; the
+no-response run took 120 seconds. These are observations, not SLAs.
+SDK-exported history verified the required step order; the dashboard UI
+was not separately tested. The immutable deployed image digest is
+`sha256:b31c6988eb62ec6a74c5c6f089a6648e9216d3355ff5c5f8baff10c09e23f21a`.
 
 ## Stage 2, not covered
 

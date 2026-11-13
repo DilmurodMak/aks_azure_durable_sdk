@@ -59,6 +59,7 @@ start() {
   client start --instance "$1" --plan sunny-soda --version 3 \
     --requester requester --approver finance --timeout-minutes "$2" > "$evidence/$1.start.json"
   wait_for "$1" Waiting
+  cp "$evidence/$1.status.json" "$evidence/$1.waiting.json"
 }
 
 main="$prefix-001"
@@ -99,6 +100,7 @@ fi
 new_pod="$(jq --raw-output '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name' "$evidence/pods-after.json")"
 replacement_seconds=$((SECONDS - restarted))
 wait_for "$main" Waiting
+cp "$evidence/$main.status.json" "$evidence/$main.after-replacement.json"
 decided="$SECONDS"
 client decide --instance "$main" --approver finance --version 3 --outcome Approve > "$evidence/$main.decision.json"
 wait_for "$main" Approved
@@ -121,7 +123,7 @@ wait_for "$timeout" Timeout
 timeout_seconds=$((SECONDS - timeout_started))
 client status --instance "$timeout" --history > "$evidence/$timeout.history.json"
 jq --exit-status '
-  def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  def epoch: sub("\\+00:00$"; "Z") | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
   [.history[] | select(.eventType == "TimerCreated")][0] as $timer |
   (($timer.fireAt | epoch) - ($timer.timestamp | epoch)) == 120 and
   (.lastUpdatedAt | epoch) >= ($timer.fireAt | epoch)

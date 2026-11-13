@@ -22,6 +22,7 @@ public sealed class PlanApproval : TaskOrchestrator<ApprovalRequest, ApprovalRes
         ApprovalResult result;
         if (await Task.WhenAny(decisionTask, timer) == timer)
         {
+            await timer;
             cancellation.Cancel();
             result = new ApprovalResult("Timeout", input.Version, null);
         }

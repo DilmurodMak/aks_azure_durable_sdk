@@ -86,6 +86,22 @@ public sealed class PlanApprovalTests
         context.Verify(item => item.SetCustomStatus(ApprovalNames.WaitingStatus), Times.Never);
     }
 
+    [Fact]
+    public async Task TimerFailureIsNotReportedAsATimeout()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        context.Setup(item => item.WaitForExternalEvent<Decision>(ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .Returns(new TaskCompletionSource<Decision>().Task);
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromException(new InvalidOperationException("Timer failed")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new PlanApproval().RunAsync(context.Object, Request));
+
+        context.Verify(item => item.SetCustomStatus("Timeout"), Times.Never);
+        context.Verify(item => item.CallActivityAsync<string>(
+            nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
+    }
+
     private static Mock<TaskOrchestrationContext> CreateContext()
     {
         Mock<TaskOrchestrationContext> context = new();
