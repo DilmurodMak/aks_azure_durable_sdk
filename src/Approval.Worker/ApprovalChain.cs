@@ -8,7 +8,7 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
     public override async Task<ApprovalChainResult> RunAsync(
         TaskOrchestrationContext context, ApprovalChainRequest input)
     {
-        ApprovalValidation.Validate(input, context.InstanceId);
+        Validate(input, context.InstanceId);
         ResolvedApprovalPolicy policy = input.Policy;
         int total = policy.Stages.Sum(stage => stage.Approvals.Length);
         int completed = 0;
@@ -29,7 +29,7 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
                     policy.WorkflowCode, policy.Id, policy.Version, stage.Name, stageIndex + 1,
                     policy.Stages.Length, role.Role);
                 ApprovalRequest request = new(input.PlanId, input.Version, input.Requester, role.Approver,
-                    stage.TimeoutMinutes, input.ApplyDecisionDelaySeconds, step);
+                    stage.TimeoutMinutes, step);
                 TaskOptions options = new(retry: null, tags: ApprovalTags.Create(
                     policy.ClientId, policy.WorkflowCode, input.PlanId, input.Version, "policy-chain",
                     stage.Name, policy.Id, policy.Version, context.InstanceId));
@@ -73,19 +73,16 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
             policy.Stages.Length, completed, total));
         return new(status, input.Version, policy.Id, policy.Version, steps.ToArray(), receipt);
     }
-}
 
-internal static class ApprovalValidation
-{
-    public static void Validate(ApprovalChainRequest input, string instanceId)
+    private static void Validate(ApprovalChainRequest input, string instanceId)
     {
         ArgumentNullException.ThrowIfNull(input);
-        new ApprovalRequest(input.PlanId, input.Version, input.Requester, "approver", 1,
-            input.ApplyDecisionDelaySeconds).Validate();
-        ValidateParentId(instanceId);
+        ApprovalRules.ValidatePlan(input.PlanId, input.Version, input.Requester);
+        ApprovalRules.ValidateDelay(input.ApplyDecisionDelaySeconds);
+        ApprovalRules.ValidateParentId(instanceId);
         ResolvedApprovalPolicy policy = input.Policy;
         ArgumentNullException.ThrowIfNull(policy);
-        ValidatePolicyKeys(policy.Id, policy.ClientId, policy.AccountId, policy.WorkflowCode, policy.Version);
+        ApprovalRules.ValidatePolicyKeys(policy.Id, policy.ClientId, policy.AccountId, policy.WorkflowCode, policy.Version);
         if (policy.Stages is null || policy.Stages.Length is < 1 or > 10)
         {
             throw new ArgumentException("A policy snapshot needs 1-10 stages.");
@@ -101,53 +98,18 @@ internal static class ApprovalValidation
                 throw new ArgumentException("Stage names must be unique; each stage needs 1-10 approvals.");
             }
 
+            ApprovalRules.ValidateTimeout(stage.TimeoutMinutes);
             HashSet<string> roles = new(StringComparer.OrdinalIgnoreCase);
             foreach (ResolvedRole role in stage.Approvals)
             {
                 ArgumentNullException.ThrowIfNull(role);
                 ApprovalPolicy.ValidateKey(role.Role, "Role");
+                ArgumentException.ThrowIfNullOrWhiteSpace(role.Approver);
                 if (!roles.Add(role.Role))
                 {
                     throw new ArgumentException("Roles within a stage must be unique.");
                 }
-
-                new ApprovalRequest(input.PlanId, input.Version, input.Requester, role.Approver,
-                    stage.TimeoutMinutes, input.ApplyDecisionDelaySeconds).Validate();
             }
         }
-    }
-
-    public static void Validate(ApprovalRequest input)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-        input.Validate();
-        if (input.Step is not { } step) return;
-        ValidateParentId(step.ParentInstanceId);
-        ValidatePolicyKeys(step.PolicyId, step.ClientId, step.AccountId, step.WorkflowCode, step.PolicyVersion);
-        ApprovalPolicy.ValidateKey(step.Stage, "Stage name");
-        ApprovalPolicy.ValidateKey(step.Role, "Role");
-        if (step.StageCount is < 1 or > 10 || step.StageNumber < 1 || step.StageNumber > step.StageCount)
-        {
-            throw new ArgumentException("Step stage number must be within its 1-10 stages.");
-        }
-    }
-
-    private static void ValidateParentId(string instanceId)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
-        if (instanceId.Length > 80)
-        {
-            throw new ArgumentException("Parent instance IDs must be at most 80 characters.");
-        }
-    }
-
-    private static void ValidatePolicyKeys(
-        string policy, string client, string? account, string workflow, int version)
-    {
-        ApprovalPolicy.ValidateKey(policy, "Policy ID");
-        ApprovalPolicy.ValidateKey(client, "Client ID");
-        if (account is not null) ApprovalPolicy.ValidateKey(account, "Account ID");
-        ApprovalPolicy.ValidateKey(workflow, "Workflow code");
-        if (version < 1) throw new ArgumentException("Policy version must be positive.");
     }
 }

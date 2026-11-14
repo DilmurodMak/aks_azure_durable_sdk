@@ -19,6 +19,7 @@ The test request is "Sunny Soda, plan version 3." We check:
 * Refusal of the wrong approver, self-approval, and stale plan versions
 * In-flight activity redelivery, demonstrating why business updates need deduplication
 * Editing saved policies while existing runs keep their original chain and new runs pick up the edit
+* One policy per client with a default chain for every business step and per-step overrides
 
 ## What runs where
 

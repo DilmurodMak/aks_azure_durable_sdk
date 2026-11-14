@@ -5,15 +5,16 @@ ms.date: 2026-11-13
 ms.topic: reference
 ---
 
-The Local Console UI writes policy versions and active selections here:
+The Local Console UI writes policy sets (versions and active selections) here:
 
 * `local.json`: console connected to the emulator
 * `azure.json`: local console connected to Azure Scheduler and the AKS worker
 
-Saving changed content creates an immutable version and activates it atomically.
-An unchanged save retains the existing version. Selected policies are read-only
-until **Edit** is chosen; **Cancel** discards unsaved edits. Selecting an
-existing version in the UI activates it for that client/account/workflow.
+A policy is one set per client or account: an optional default chain for every business step
+plus per-step overrides, versioned together. Saving changed content creates an immutable
+version and activates it atomically. An unchanged save retains the existing version. Selected
+policies are read-only until **Edit** is chosen; **Cancel** discards unsaved edits. Selecting an
+existing version in the UI activates it for that client/account.
 Running workflows retain their original resolved policy snapshots.
 
 These generated files are ignored by Git and survive console restarts.

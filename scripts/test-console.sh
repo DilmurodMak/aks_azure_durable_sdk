@@ -50,10 +50,10 @@ start() {
   post /api/demo-identities "$(jq -nc --arg client "$policy_id" \
     '{clientId:$client,accountId:null,assignments:{Finance:"finance"}}')" > "$evidence/$1.identities.json"
   post /api/policies "$(jq -nc --arg id "$policy_id" --argjson minutes "$2" \
-    '{id:$id,clientId:$id,workflowCode:"Gate2",baseVersion:0,
-      stages:[{name:"finance",roles:["Finance"],timeoutMinutes:$minutes}]}')" > "$evidence/$1.policy.json"
+    '{id:$id,clientId:$id,baseVersion:0,
+      defaultStages:[{name:"finance",roles:["Finance"],timeoutMinutes:$minutes}],overrides:[]}')" > "$evidence/$1.policy.json"
   post /api/workflows "$(jq -nc --arg id "$1" --arg client "$policy_id" \
-    '{instanceId:$id,clientId:$client,workflowCode:"Gate2",planId:"sunny-soda",version:3,requester:"requester"}')" \
+    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"requester"}')" \
     > "$evidence/$1.start.json"
   jq -e --arg id "$1" --arg policy "$policy_id" \
     '.instanceId==$id and .policyId==$policy and .policyVersion==1' "$evidence/$1.start.json" >/dev/null
@@ -63,7 +63,7 @@ check_child() {
   local child="$1-s1-r1" expected="$2"
   status "$child" > "$evidence/$child.history.json"
   jq -e --arg expected "$expected" '
-    .runtimeStatus=="Completed" and .result.status==$expected and .result.receipt==null and
+    .runtimeStatus=="Completed" and .result.status==$expected and
     ([.history[]|select(.eventType=="TimerCreated")]|length)==1 and
     any(.history[]; .eventType=="TaskScheduled" and .name=="RecordSubmission") and
     any(.history[]; .eventType=="EventRaised" and .name=="Decision") and

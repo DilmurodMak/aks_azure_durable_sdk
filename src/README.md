@@ -28,14 +28,17 @@ and multi-step policies use the same parent/child pattern.
 
 The [policy registry](Approval.Console/PolicyStore.cs) saves immutable versions
 in root [approval_policies/](../approval_policies/): ignored `local.json` or
-`azure.json`. Saving creates and activates the new version atomically.
-Selecting an existing version in the UI activates it for its scope.
+`azure.json`. A policy is one set per client or account: an optional default chain for every
+business step plus per-step overrides, versioned as one unit. Saving creates and activates
+the new version atomically. Selecting an existing version in the UI activates it for its scope.
+At start, the chain is chosen narrower owner first (account, then client, then `agency-default`),
+and inside an owner a step override beats its default chain.
 Policies contain no actor assignments. The separate
 [simulator store](Approval.Console/DemoIdentityStore.cs) persists them in
 [demo_settings/](../demo_settings/), scoped by client/account.
-At each new start, the console resolves the active policy and current simulator assignments,
-then passes the complete resolved snapshot into the parent workflow; workers do not reread
-editable files. This is a local registry stand-in, not a production configuration service.
+At each new start, the console resolves the active policy chain and current simulator assignments,
+then passes the complete resolved snapshot, including which rule supplied it, into the parent workflow;
+workers do not reread editable files. This is a local registry stand-in, not a production configuration service.
 
 ## Build and test
 
@@ -69,11 +72,12 @@ The [HTTP file](../approvals.http) targets the console, **not Scheduler directly
 | HTTP operation                         | Purpose                                                       |
 | -------------------------------------- | ------------------------------------------------------------- |
 | `GET /api/environment`                 | Confirm local/Azure endpoint and task hub                     |
-| `GET /api/approvals`                   | List waiting approvals                                        |
 | `POST /api/approvals/{id}/decision`    | Send a demo decision; `202` means sent, not approved          |
 | `GET /api/approvals/{id}?history=true` | Read business status and durable history                      |
+| `GET /api/business-steps` | List the hard-coded business workflows (from the analysis) an override may target |
 | `GET /api/policies`                    | List saved versions and active selections                     |
-| `POST /api/policies` | Save changed content as a new active version (`201`); unchanged content returns the same version (`200`) |
+| `POST /api/policies` | Save a policy set (default chain + step overrides) as a new active version (`201`); unchanged content returns the same version (`200`); an unknown override step returns `400` |
+| `GET /api/policy-match` | Show which chain a workflow started now would use for `clientId`, optional `accountId`, and `workflowCode` |
 | `POST /api/policies/{id}/activate`     | Activate a version for new starts                             |
 | `POST /api/workflows`                  | Start a chain using the matching active policy                |
 | `GET /api/workflows/{id}`              | Read pinned policy, structured progress, and aggregate result |
@@ -87,7 +91,7 @@ OpenAPI is at `/openapi/v1.json`. POST requests need JSON and
 Its **Acting as** field is not real approver authentication.
 It selects available role/user assignments from a workflow's pinned reviewers.
 The full plan shows future stages without starting them early; only actual waiting
-children in the parent's current group can receive a decision through the client/API.
+children in the parent's current stage can receive a decision through the client/API.
 
 For the CLI, after selecting an environment:
 
@@ -133,4 +137,5 @@ immutable image digest, checks the manifest, and waits for rollout.
 
 The worker image registers the parent and reusable approval step once. Subsequent
 policy edits need no image rebuild, restart, or AKS update. New business activity
-types still require code. Use fresh instances; no migration/compatibility layer is included.
+types still require code. This is a green deployment: the worker accepts only the current
+contracts, with no migration or compatibility layer.

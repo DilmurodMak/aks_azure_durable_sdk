@@ -11,7 +11,8 @@ namespace Approval.Tests;
 
 public sealed class ApprovalStepTests
 {
-    private static readonly ApprovalRequest Request = new("sunny-soda", 3, "requester", "finance", 15);
+    private static readonly ApprovalRequest Request = new("sunny-soda", 3, "requester", "finance", 15,
+        new ApprovalStepContext("chain-001", "client", null, "B07", "policy", 1, "finance", 1, 1, "Finance"));
     private static readonly DateTime Start = new(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc);
     private static readonly ApprovalProgress Waiting = new("Waiting", "finance", 1, 1);
 
@@ -56,7 +57,7 @@ public sealed class ApprovalStepTests
         validDecision.SetResult(new Decision("FINANCE", "Approve", 3));
         ApprovalResult result = await workflow;
 
-        Assert.Equal(new ApprovalResult("Approved", 3, null), result);
+        Assert.Equal(new ApprovalResult("Approved", 3), result);
         Assert.True(timerToken.IsCancellationRequested);
         context.Verify(item => item.CreateTimer(Start.AddMinutes(15), It.IsAny<CancellationToken>()), Times.Once);
         context.Verify(item => item.SetCustomStatus(Waiting), Times.Once);
@@ -80,7 +81,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Rejected", 3, null), result);
+        Assert.Equal(new ApprovalResult("Rejected", 3), result);
         Assert.True(timerToken.IsCancellationRequested);
         context.Verify(item => item.WaitForExternalEvent<Decision>(
             ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()), Times.Exactly(2));
@@ -134,7 +135,7 @@ public sealed class ApprovalStepTests
         timer.SetResult();
         ApprovalResult result = await workflow;
 
-        Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
+        Assert.Equal(new ApprovalResult("Timeout", 3), result);
         Assert.True(eventToken.IsCancellationRequested);
         Assert.Equal([Waiting, Waiting with { State = "Timeout", Completed = 1 }], statuses);
         context.Verify(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -154,7 +155,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
+        Assert.Equal(new ApprovalResult("Timeout", 3), result);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -173,7 +174,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Timeout", 3, null), result);
+        Assert.Equal(new ApprovalResult("Timeout", 3), result);
         Assert.True(eventToken.IsCancellationRequested);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
@@ -245,13 +246,12 @@ public sealed class ApprovalStepTests
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Decision("finance", "Approve", 3));
         context.Setup(item => item.CallActivityAsync<string>(
-                nameof(ApplyDecision), new ApplyDecisionRequest("sunny-soda:v3:approved", 60),
+                nameof(ApplyDecision), new ApplyDecisionRequest("sunny-soda:v3:approved"),
                 It.IsAny<TaskOptions?>()))
             .ThrowsAsync(new InvalidOperationException("Apply failed"));
 
-        ApprovalResult result = await new ApprovalStep().RunAsync(
-            context.Object, Request with { ApplyDecisionDelaySeconds = 60 });
-        Assert.Equal(new ApprovalResult("Approved", 3, null), result);
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
+        Assert.Equal(new ApprovalResult("Approved", 3), result);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -270,7 +270,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request with { Step = step });
 
-        Assert.Equal(new ApprovalResult(state, 3, null), result);
+        Assert.Equal(new ApprovalResult(state, 3), result);
         context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Waiting", "Legal-review", 2, 3)), Times.Once);
         context.Verify(item => item.SetCustomStatus(new ApprovalProgress(state, "Legal-review", 2, 3, 1)), Times.Once);
         context.Verify(item => item.CallActivityAsync<string>(
@@ -394,14 +394,13 @@ public sealed class ApprovalStepTests
     }
 
     [Fact]
-    public void ActivityDelayDefaultsToZero()
+    public void RequestRoundTripsThroughTheSdkConverterAndValidates()
     {
-        ApprovalRequest? request = new JsonDataConverter(ApprovalJson.CreateSerializerOptions()).Deserialize<ApprovalRequest>(
-            """{"PlanId":"sunny-soda","Version":3,"Requester":"requester","Approver":"finance","TimeoutMinutes":15}""");
+        var converter = new JsonDataConverter(ApprovalJson.CreateSerializerOptions());
+        ApprovalRequest? request = converter.Deserialize<ApprovalRequest>(converter.Serialize(Request));
 
         Assert.Equal(Request, request);
-        Assert.Equal(0, request!.ApplyDecisionDelaySeconds);
-        request.Validate();
+        request!.Validate();
     }
 
     [Fact]
@@ -414,30 +413,6 @@ public sealed class ApprovalStepTests
         Assert.Equal("sunny-soda:v3:approved",
             converter.Deserialize<FieldPayload>("""{"receipt":"sunny-soda:v3:approved"}""")!.Receipt);
         Assert.True(ApprovalJson.CreateSerializerOptions().IncludeFields);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(60)]
-    public void DelayValidationAcceptsBothBounds(int delay)
-    {
-        (Request with { ApplyDecisionDelaySeconds = delay }).Validate();
-    }
-
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(61)]
-    [InlineData(int.MaxValue)]
-    public async Task InvalidDelayIsRejectedBeforeAnyWorkflowActivity(int delay)
-    {
-        Mock<TaskOrchestrationContext> context = CreateContext();
-        ApprovalRequest request = Request with { ApplyDecisionDelaySeconds = delay };
-
-        Assert.Throws<ArgumentException>(request.Validate);
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => new ApprovalStep().RunAsync(context.Object, request));
-        context.Verify(item => item.CallActivityAsync<string>(
-            It.IsAny<TaskName>(), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
 
     [Fact]

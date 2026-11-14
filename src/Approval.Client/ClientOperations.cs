@@ -22,7 +22,7 @@ public static class ClientOperations
 
         OrchestrationMetadata metadata = await client.GetInstanceAsync(
             command.InstanceId, getInputsAndOutputs: true, cancellation)
-            ?? throw new InvalidOperationException($"Instance {command.InstanceId} was not found.");
+            ?? throw new KeyNotFoundException($"Instance {command.InstanceId} was not found.");
         if (metadata.Name != ApprovalNames.StepOrchestration && metadata.Name != ApprovalNames.ChainOrchestration)
         {
             throw new InvalidOperationException($"Instance {command.InstanceId} is not a {ApprovalNames.StepOrchestration} workflow.");
@@ -43,15 +43,14 @@ public static class ClientOperations
                 ?? throw new ArgumentException("Decide requires an explicit decision.");
             ApprovalRequest input = metadata.ReadInputAs<ApprovalRequest>()
                 ?? throw new InvalidDataException("Approval input is missing.");
-            ApprovalStepContext step = input.Step
-                ?? throw new InvalidOperationException("Reviewer is not part of a policy-driven workflow.");
+            ApprovalStepContext step = input.Step;
             OrchestrationMetadata parent = await client.GetInstanceAsync(
                 step.ParentInstanceId, true, cancellation)
                 ?? throw new InvalidOperationException("Parent workflow was not found.");
             if (parent.Name != ApprovalNames.ChainOrchestration ||
                 parent.RuntimeStatus != OrchestrationRuntimeStatus.Running ||
                 parent.ReadCustomStatusAs<ApprovalProgress>()?.StageNumber != step.StageNumber)
-                throw new InvalidOperationException("This approval group is not active in its parent workflow.");
+                throw new InvalidOperationException("This approval stage is not active in its parent workflow.");
             await client.RaiseEventAsync(command.InstanceId, ApprovalNames.DecisionEvent, decision, cancellation);
             return new
             {

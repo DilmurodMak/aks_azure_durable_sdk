@@ -7,7 +7,7 @@ ms.topic: reference
 
 ## Simulator storage
 
-The **Demo identities** tab writes scoped role-to-user mappings here:
+The **Identities** tab (step 1) writes scoped role-to-user mappings here:
 
 * `local.json`: emulator-connected console
 * `azure.json`: Azure-connected local console

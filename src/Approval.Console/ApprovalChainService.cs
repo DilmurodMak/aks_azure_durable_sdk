@@ -25,7 +25,7 @@ public sealed class ApprovalChainService(
             ApprovalChainRequest input = metadata.ReadInputAs<ApprovalChainRequest>()
                 ?? throw new InvalidDataException("Workflow input is missing.");
             workflows.Add(new(metadata.InstanceId, input.PlanId, input.Version, metadata.RuntimeStatus.ToString(),
-                input.Policy.Version, metadata.CreatedAt));
+                input.Policy.Version, metadata.CreatedAt, input.Policy.WorkflowCode, input.Policy.Source));
         }
         return workflows.OrderByDescending(item => item.CreatedAt).ToArray();
     }
@@ -69,7 +69,7 @@ public sealed class ApprovalChainService(
                 string? reason = canDecide || terminal ? null
                     : parent.RuntimeStatus is not (OrchestrationRuntimeStatus.Running or OrchestrationRuntimeStatus.Pending)
                         ? $"Workflow is {parent.RuntimeStatus}; decisions are not available."
-                    : !priorStagesFinished ? $"Waiting for group {stageIndex} to finish."
+                    : !priorStagesFinished ? $"Waiting for stage {stageIndex} to finish."
                     : "Waiting for the worker to start this step.";
                 rows.Add(new(childId, id, input.PlanId, input.Version, input.Requester, reviewer.Approver,
                     reviewer.Role, input.Policy.Version, FormattableString.Invariant($"{stageIndex + 1}.{reviewerIndex + 1}"),
@@ -84,13 +84,13 @@ public sealed class ApprovalChainService(
     public async Task<object> StartAsync(StartChainRequest request, CancellationToken cancellation)
     {
         ApprovalPolicy.ValidateKey(request.InstanceId, "Instance ID");
-        ApprovalPolicy definition = await policies.ResolveAsync(
+        PolicyMatch match = await policies.ResolveAsync(
             request.ClientId, request.AccountId, request.WorkflowCode, cancellation);
         Dictionary<string, string> assignments = await identities.ResolveAsync(
-            request.ClientId, request.AccountId, definition.Stages.SelectMany(stage => stage.Roles), cancellation);
-        ResolvedApprovalPolicy policy = definition.Resolve(role => assignments[role]);
-        new ApprovalRequest(request.PlanId, request.Version, request.Requester,
-            "validation-only", 15, request.ApplyDecisionDelaySeconds).Validate();
+            request.ClientId, request.AccountId, match.Stages.SelectMany(stage => stage.Roles), cancellation);
+        ResolvedApprovalPolicy policy = match.Resolve(request.ClientId, request.AccountId, role => assignments[role]);
+        ApprovalRules.ValidatePlan(request.PlanId, request.Version, request.Requester);
+        ApprovalRules.ValidateDelay(request.ApplyDecisionDelaySeconds);
         if (await client.GetInstanceAsync(request.InstanceId, cancellation) is not null)
             throw new InvalidOperationException("Instance already exists. Use a fresh ID.");
         ApprovalChainRequest input = new(request.PlanId, request.Version, request.Requester, policy,
@@ -102,7 +102,14 @@ public sealed class ApprovalChainService(
         }.WithDedupeStatuses(Enum.GetValues<OrchestrationRuntimeStatus>());
         await client.ScheduleNewOrchestrationInstanceAsync(
             ApprovalNames.ChainOrchestration, input, options, cancellation);
-        return new { instanceId = request.InstanceId, policyId = policy.Id, policyVersion = policy.Version, snapshot = policy };
+        return new
+        {
+            instanceId = request.InstanceId,
+            policyId = policy.Id,
+            policyVersion = policy.Version,
+            source = policy.Source,
+            snapshot = policy
+        };
     }
 
     public async Task<object> StatusAsync(string id, CancellationToken cancellation)

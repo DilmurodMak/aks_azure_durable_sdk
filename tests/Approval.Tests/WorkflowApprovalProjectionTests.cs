@@ -12,11 +12,11 @@ public sealed class WorkflowApprovalProjectionTests
 {
     private static readonly DataConverter Converter = new JsonDataConverter(ApprovalJson.CreateSerializerOptions());
     private static ApprovalChainRequest Input => new("sunny-soda", 3, "requester",
-        new("policy", "client", null, "Gate2", 7,
+        new("policy", "client", null, "B07", 7,
         [
             new("parallel-review", 15, [new("Finance", "finance"), new("Legal", "legal")]),
             new("sign-off", 15, [new("Client", "client")])
-        ]));
+        ], "client default"));
 
     [Fact]
     public async Task ParallelReviewersAreActionableButFutureStageIsShownBlocked()
@@ -33,7 +33,7 @@ public sealed class WorkflowApprovalProjectionTests
         Assert.False(rows[2].CanDecide);
         Assert.False(rows[2].CanView);
         Assert.Equal("Blocked", rows[2].State);
-        Assert.Contains("group 1", rows[2].BlockedReason);
+        Assert.Contains("stage 1", rows[2].BlockedReason);
         Assert.Equal("sign-off", rows[2].Progress.Stage);
         Assert.All(rows, row => Assert.Equal(7, row.PolicyVersion));
         policies.VerifyNoOtherCalls();
@@ -116,7 +116,7 @@ public sealed class WorkflowApprovalProjectionTests
     public async Task FutureStepCannotBeSignaledBeforeItExists()
     {
         var (client, _) = Client();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ClientOperations.ExecuteAsync(client.Object,
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => ClientOperations.ExecuteAsync(client.Object,
             new("decide", "run-s2-r1", new("client", "Approve", 3)), default));
         client.Verify(item => item.RaiseEventAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -182,7 +182,7 @@ public sealed class WorkflowApprovalProjectionTests
             SerializedInput = Converter.Serialize(input),
             SerializedCustomStatus = Converter.Serialize(new ApprovalProgress("Waiting", stagePolicy.Name, stage, 2)),
             SerializedOutput = status == OrchestrationRuntimeStatus.Completed
-                ? Converter.Serialize(new ApprovalResult(outcome, 3, null)) : null
+                ? Converter.Serialize(new ApprovalResult(outcome, 3)) : null
         };
     }
 }

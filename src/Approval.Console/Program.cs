@@ -58,7 +58,11 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseRequestTimeouts();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // The console UI changes often; always revalidate (ETag) so a stale script never runs against new markup.
+    OnPrepareResponse = context => context.Context.Response.Headers.CacheControl = "no-cache"
+});
 app.MapOpenApi();
 app.MapPolicies();
 app.MapApprovals(new(mode, connection.Endpoint, connection.TaskHub, dashboard,

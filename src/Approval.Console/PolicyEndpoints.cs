@@ -7,6 +7,8 @@ public static class PolicyEndpoints
 {
     public static void MapPolicies(this WebApplication app)
     {
+        app.MapGet("/api/business-steps", () => TypedResults.Ok(BusinessStepCatalogue.All))
+            .WithSummary("List the business workflows (from the platform analysis) that can use an approval policy. Hard-coded for the spike.");
         app.MapGet("/api/demo-identities", async Task<Ok<DemoIdentityRegistry>> (
             IDemoIdentityStore store, CancellationToken cancellation) =>
                 TypedResults.Ok(await store.ListAsync(cancellation)))
@@ -22,11 +24,20 @@ public static class PolicyEndpoints
         app.MapPost("/api/policies", async Task<Results<Created<ApprovalPolicy>, Ok<ApprovalPolicy>>> (
             SavePolicyRequest request, IPolicyStore store, CancellationToken cancellation) =>
         {
+            request.ValidateSteps();
             ApprovalPolicy policy = await store.SaveAsync(request, cancellation);
             return policy.Version == request.BaseVersion
                 ? TypedResults.Ok(policy)
                 : TypedResults.Created("/api/policies", policy);
-        }).WithSummary("Save changed content as a new active version. Unchanged content returns the existing version.");
+        }).WithSummary("Save changed content as a new active version of the client/account policy set. Unchanged content returns the existing version.");
+        app.MapGet("/api/policy-match", async Task<Ok<PolicyMatchResponse>> (
+            string clientId, string? accountId, string workflowCode, IPolicyStore store, CancellationToken cancellation) =>
+        {
+            PolicyMatch match = await store.ResolveAsync(
+                clientId, string.IsNullOrWhiteSpace(accountId) ? null : accountId, workflowCode, cancellation);
+            return TypedResults.Ok(new PolicyMatchResponse(
+                match.Policy.Id, match.Policy.Version, match.WorkflowCode, match.Source, match.Stages));
+        }).WithSummary("Show which active chain a workflow started now would use (narrower owner first; override beats default).");
         app.MapPost("/api/policies/{id}/activate", async Task<Ok<ApprovalPolicy>> (
             string id, ActivatePolicyRequest request, IPolicyStore store, CancellationToken cancellation) =>
                 TypedResults.Ok(await store.ActivateAsync(id, request.Version, cancellation)))

@@ -7,6 +7,9 @@
 ### Environment (use port 5081 for the Azure-connected console)
 GET {{base}}/api/environment
 
+### Business steps an override may target (hard-coded from the analysis; unknown codes get 400)
+GET {{base}}/api/business-steps
+
 ### Simulator actors: replace this exact client/account scope without creating a policy version.
 POST {{base}}/api/demo-identities
 X-Approval-Console: spike
@@ -15,13 +18,14 @@ Content-Type: application/json
 {
   "clientId": "{{client}}",
   "accountId": null,
-  "assignments": {"Finance": "finance"}
+  "assignments": {"Finance": "finance", "Client": "client"}
 }
 
 ### Simulator assignments (separate from approval policies)
 GET {{base}}/api/demo-identities
 
-### Save a roles-only policy: stages, role order, and timeouts, never actor assignments.
+### Save a roles-only policy set: a default chain for every business step plus per-step overrides.
+### Stages, role order, and timeouts only; never actor assignments. Save creates one new version of the whole set.
 POST {{base}}/api/policies
 X-Approval-Console: spike
 Content-Type: application/json
@@ -29,15 +33,25 @@ Content-Type: application/json
 {
   "id": "{{policy}}",
   "clientId": "{{client}}",
-  "workflowCode": "Gate2",
   "baseVersion": 0,
-  "stages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}]
+  "defaultStages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}],
+  "overrides": [
+    {"workflowCode": "B07", "stages": [
+      {"name": "review", "roles": ["Finance"], "timeoutMinutes": 15},
+      {"name": "client", "roles": ["Client"], "timeoutMinutes": 15}]}
+  ]
 }
 
 ### Saved policies and active selections
 GET {{base}}/api/policies
 
-### Unchanged save: 200, same version. Only policy changes create a new active version.
+### Which chain would a workflow use? B07 has an override; any other step uses the default.
+GET {{base}}/api/policy-match?clientId={{client}}&workflowCode=B07
+
+###
+GET {{base}}/api/policy-match?clientId={{client}}&workflowCode=B08
+
+### Unchanged save: 200, same version. Only content changes create a new active version.
 POST {{base}}/api/policies
 X-Approval-Console: spike
 Content-Type: application/json
@@ -45,9 +59,13 @@ Content-Type: application/json
 {
   "id": "{{policy}}",
   "clientId": "{{client}}",
-  "workflowCode": "Gate2",
   "baseVersion": 1,
-  "stages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}]
+  "defaultStages": [{"name": "review", "roles": ["Finance"], "timeoutMinutes": 15}],
+  "overrides": [
+    {"workflowCode": "B07", "stages": [
+      {"name": "review", "roles": ["Finance"], "timeoutMinutes": 15},
+      {"name": "client", "roles": ["Client"], "timeoutMinutes": 15}]}
+  ]
 }
 
 ### Start: this is the only business start endpoint. Use a fresh instance ID.
@@ -58,7 +76,7 @@ Content-Type: application/json
 {
   "instanceId": "{{instance}}",
   "clientId": "{{client}}",
-  "workflowCode": "Gate2",
+  "workflowCode": "B07",
   "planId": "sunny-soda",
   "version": 3,
   "requester": "requester"
@@ -70,11 +88,8 @@ GET {{base}}/api/workflows/{{instance}}
 ### Workflow choices for the full-plan overview
 GET {{base}}/api/workflows
 
-### All pinned steps: 1.1/1.2 parallel, 2.1 blocked until group 1 finishes
+### All pinned steps: 1.1/1.2 parallel, 2.1 blocked until stage 1 finishes
 GET {{base}}/api/workflows/{{instance}}/approvals
-
-### Waiting reviewer steps (use an actual child ID as @approval)
-GET {{base}}/api/approvals
 
 ### Stale decision: sent, refused by the step, still waiting
 POST {{base}}/api/approvals/{{approval}}/decision

@@ -6,35 +6,12 @@ namespace Approval.Console;
 
 public interface IApprovalConsoleService
 {
-    Task<IReadOnlyList<WaitingApprovalResponse>> ListAsync(CancellationToken cancellation);
     Task<object> DecideAsync(string id, DecisionForm decision, CancellationToken cancellation);
     Task<object> StatusAsync(string id, bool history, CancellationToken cancellation);
 }
 
 public sealed class ApprovalConsoleService(DurableTaskClient client) : IApprovalConsoleService
 {
-    public async Task<IReadOnlyList<WaitingApprovalResponse>> ListAsync(CancellationToken cancellation)
-    {
-        List<WaitingApprovalResponse> waiting = [];
-        OrchestrationQuery query = new(Statuses: [OrchestrationRuntimeStatus.Running], FetchInputsAndOutputs: true);
-        await foreach (OrchestrationMetadata metadata in client.GetAllInstancesAsync(query).WithCancellation(cancellation))
-        {
-            if (metadata.Name != ApprovalNames.StepOrchestration ||
-                metadata.ReadCustomStatusAs<ApprovalProgress>()?.State != "Waiting")
-            {
-                continue;
-            }
-
-            ApprovalRequest request = metadata.ReadInputAs<ApprovalRequest>()
-                ?? throw new InvalidOperationException("Waiting approval has missing input.");
-            waiting.Add(new(metadata.InstanceId, request.PlanId, request.Version, request.Requester,
-                request.Approver, metadata.CreatedAt, metadata.ReadCustomStatusAs<ApprovalProgress>(),
-                request.Step?.ParentInstanceId, request.Step?.PolicyVersion, request.Step?.Role));
-        }
-
-        return waiting;
-    }
-
     public Task<object> DecideAsync(string id, DecisionForm decision, CancellationToken cancellation)
     {
         ValidateId(id);
@@ -45,15 +22,10 @@ public sealed class ApprovalConsoleService(DurableTaskClient client) : IApproval
             cancellation);
     }
 
-    public async Task<object> StatusAsync(string id, bool history, CancellationToken cancellation)
+    public Task<object> StatusAsync(string id, bool history, CancellationToken cancellation)
     {
         ValidateId(id);
-        if (await client.GetInstanceAsync(id, cancellation) is null)
-        {
-            throw new KeyNotFoundException("Approval was not found.");
-        }
-
-        return await ClientOperations.ExecuteAsync(client,
+        return ClientOperations.ExecuteAsync(client,
             new ClientCommand("status", id, IncludeHistory: history), cancellation);
     }
 

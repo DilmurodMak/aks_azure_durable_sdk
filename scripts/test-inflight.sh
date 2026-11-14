@@ -38,10 +38,10 @@ fi
 post /api/demo-identities "$(jq -nc --arg client "$policy_id" \
   '{clientId:$client,accountId:null,assignments:{Finance:"finance"}}')" > "$evidence/identities.json"
 post /api/policies "$(jq -nc --arg id "$policy_id" \
-  '{id:$id,clientId:$id,workflowCode:"Gate2",baseVersion:0,
-    stages:[{name:"finance",roles:["Finance"],timeoutMinutes:5}]}')" > "$evidence/policy.json"
+  '{id:$id,clientId:$id,baseVersion:0,
+    defaultStages:[{name:"finance",roles:["Finance"],timeoutMinutes:5}],overrides:[]}')" > "$evidence/policy.json"
 post /api/workflows "$(jq -nc --arg id "$instance" --arg client "$policy_id" \
-  '{instanceId:$id,clientId:$client,workflowCode:"Gate2",planId:"sunny-soda",version:3,
+  '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,
     requester:"requester",applyDecisionDelaySeconds:30}')" > "$evidence/start.json"
 jq -e --arg id "$instance" --arg policy "$policy_id" \
   '.instanceId==$id and .policyId==$policy and .policyVersion==1' "$evidence/start.json" >/dev/null
@@ -92,7 +92,7 @@ jq -e --arg id "$instance" --arg child "$child" '
 ' "$evidence/status.json" >/dev/null
 client status --instance "$child" --history > "$evidence/child-history.json"
 jq -e '
-  .runtimeStatus=="Completed" and .result.status=="Approved" and .result.receipt==null and
+  .runtimeStatus=="Completed" and .result.status=="Approved" and
   any(.history[]; .eventType=="TaskScheduled" and .name=="RecordSubmission") and
   any(.history[]; .eventType=="EventRaised" and .name=="Decision") and
   any(.history[]; .eventType=="ExecutionCompleted") and

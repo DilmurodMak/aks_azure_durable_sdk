@@ -14,7 +14,7 @@ public sealed class DemoIdentityTests : IDisposable
     private DemoIdentityStore Identities => new(Path.Combine(directory, "identities.json"));
 
     [Fact]
-    public async Task PolicySavesWithoutActorsAndRejectsLegacyActorConfiguration()
+    public async Task PolicySavesWithoutActorsAndRejectsActorConfiguration()
     {
         ApprovalPolicy saved = await Policies.SaveAsync(Draft(), default);
         Assert.Equal(1, saved.Version);
@@ -22,7 +22,7 @@ public sealed class DemoIdentityTests : IDisposable
         Assert.DoesNotContain("actor", policyJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("demoRoleAssignments", policyJson);
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<SavePolicyRequest>(
-            """{"id":"policy","clientId":"client","workflowCode":"Gate2","stages":[{"name":"finance","roles":["Finance"]}],"demoRoleAssignments":{"Finance":"finance"}}""",
+            """{"id":"policy","clientId":"client","defaultStages":[{"name":"finance","roles":["Finance"]}],"demoRoleAssignments":{"Finance":"finance"}}""",
             new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         await Assert.ThrowsAsync<MissingDemoIdentityException>(() =>
             Identities.ResolveAsync("client", null, ["Finance"], default));
@@ -51,7 +51,7 @@ public sealed class DemoIdentityTests : IDisposable
         {
             InstanceId = "run-one",
             ClientId = "client",
-            WorkflowCode = "Gate2",
+            WorkflowCode = "B07",
             PlanId = "sunny-soda",
             Version = 3,
             Requester = "requester"
@@ -63,6 +63,8 @@ public sealed class DemoIdentityTests : IDisposable
 
         Assert.Equal(1, starts[0].Policy.Version);
         Assert.Equal(1, starts[1].Policy.Version);
+        Assert.Equal("client default", starts[0].Policy.Source);
+        Assert.Equal("B07", starts[0].Policy.WorkflowCode);
         Assert.Equal("finance-one", starts[0].Policy.Stages[0].Approvals[0].Approver);
         Assert.Equal("finance-two", starts[1].Policy.Stages[0].Approvals[0].Approver);
         Assert.Equal(before, await File.ReadAllBytesAsync(Path.Combine(directory, "policies.json")));
@@ -80,7 +82,7 @@ public sealed class DemoIdentityTests : IDisposable
         {
             InstanceId = "missing",
             ClientId = "client",
-            WorkflowCode = "Gate2",
+            WorkflowCode = "B07",
             PlanId = "sunny-soda",
             Version = 3,
             Requester = "requester"
@@ -114,8 +116,7 @@ public sealed class DemoIdentityTests : IDisposable
     {
         Id = "policy",
         ClientId = "client",
-        WorkflowCode = "Gate2",
-        Stages = [new("finance", ["Finance"])]
+        DefaultStages = [new("finance", ["Finance"])]
     };
 
     private static SaveDemoIdentitiesRequest Assignment(string actor) => new()

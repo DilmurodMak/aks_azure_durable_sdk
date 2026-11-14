@@ -13,14 +13,14 @@ public sealed record DecisionForm
     [Range(1, int.MaxValue)] public int Version { get; init; }
 }
 
-/// <summary>A pending approval available to the demo console.</summary>
-public sealed record WaitingApprovalResponse(
-    string InstanceId, string PlanId, int Version, string Requester, string Approver, DateTimeOffset CreatedAt,
-    ApprovalProgress? Progress = null, string? ParentInstanceId = null, int? PolicyVersion = null, string? Role = null);
-
 /// <summary>A workflow available for viewing its complete pinned approval plan.</summary>
 public sealed record WorkflowSummaryResponse(
-    string InstanceId, string PlanId, int Version, string RuntimeStatus, int PolicyVersion, DateTimeOffset CreatedAt);
+    string InstanceId, string PlanId, int Version, string RuntimeStatus, int PolicyVersion, DateTimeOffset CreatedAt,
+    string WorkflowCode, string ChainSource);
+
+/// <summary>Which chain would apply if a workflow started now for the client, account, and business step.</summary>
+public sealed record PolicyMatchResponse(
+    string PolicyId, int PolicyVersion, string WorkflowCode, string Source, PolicyStage[] Stages);
 
 /// <summary>A planned reviewer step, including steps that have not yet been started by the worker.</summary>
 public sealed record WorkflowApprovalResponse(
@@ -32,16 +32,33 @@ public sealed record WorkflowApprovalResponse(
 public sealed record ConsoleEnvironmentResponse(
     string Environment, string Endpoint, string TaskHub, string DashboardUrl, string Warning);
 
-/// <summary>Save a new immutable policy version; stages run in order, roles in one stage run in parallel.</summary>
+/// <summary>
+/// Save a new immutable policy set version for a client or account: an optional default chain for every
+/// business step plus per-step overrides. Stages run in order; roles in one stage run in parallel.
+/// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SavePolicyRequest
 {
     [Required] public required string Id { get; init; }
     [Required] public required string ClientId { get; init; }
     public string? AccountId { get; init; }
-    [Required] public required string WorkflowCode { get; init; }
     [Range(0, int.MaxValue - 1)] public int BaseVersion { get; init; }
-    [Required] public required PolicyStage[] Stages { get; init; }
+
+    /// <summary>The chain for every business step without an override. Null means no default.</summary>
+    public PolicyStage[]? DefaultStages { get; init; }
+
+    public StepOverride[] Overrides { get; init; } = [];
+
+    /// <summary>Overrides must target business steps from the catalogue.</summary>
+    public void ValidateSteps()
+    {
+        foreach (StepOverride item in Overrides ?? [])
+        {
+            if (!BusinessStepCatalogue.Contains(item?.WorkflowCode))
+                throw new ArgumentException(
+                    "Each override must target a business step from the platform analysis, for example B07. Use GET /api/business-steps.");
+        }
+    }
 }
 
 /// <summary>Activate an existing saved policy version for future workflow starts only.</summary>

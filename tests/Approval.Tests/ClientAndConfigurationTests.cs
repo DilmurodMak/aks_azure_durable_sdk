@@ -33,8 +33,19 @@ public sealed class ClientAndConfigurationTests
     public void InvalidTimeoutIsAnExplicitError(string timeout)
     {
         double minutes = double.Parse(timeout, System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Throws<ArgumentException>(() =>
-            new ApprovalRequest("sunny-soda", 3, "requester", "finance", minutes).Validate());
+        Assert.Throws<ArgumentException>(() => ApprovalRules.ValidateTimeout(minutes));
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(60, true)]
+    [InlineData(-1, false)]
+    [InlineData(61, false)]
+    [InlineData(int.MaxValue, false)]
+    public void DelayAcceptsBothBoundsAndRejectsOutsideThem(int seconds, bool valid)
+    {
+        if (valid) ApprovalRules.ValidateDelay(seconds);
+        else Assert.Throws<ArgumentException>(() => ApprovalRules.ValidateDelay(seconds));
     }
 
     [Theory]

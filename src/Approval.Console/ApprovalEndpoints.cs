@@ -8,10 +8,6 @@ public static class ApprovalEndpoints
     {
         app.MapGet("/api/environment", () => TypedResults.Ok(environment))
             .WithSummary("Show the selected backend and spike-only identity warning.");
-        app.MapGet("/api/approvals", async Task<Ok<IReadOnlyList<WaitingApprovalResponse>>> (
-            IApprovalConsoleService service, CancellationToken cancellation) =>
-                TypedResults.Ok(await service.ListAsync(cancellation)))
-            .WithSummary("List waiting approvals.");
         app.MapPost("/api/approvals/{id}/decision", async Task<Accepted<object>> (
             string id, DecisionForm decision, IApprovalConsoleService service, CancellationToken cancellation) =>
                 TypedResults.Accepted($"/api/approvals/{id}", await service.DecideAsync(id, decision, cancellation)))

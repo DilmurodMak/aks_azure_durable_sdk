@@ -133,48 +133,70 @@ For dashboard **Raise Event**, use name `Decision` and:
 
 ## Configure a chain once, then start workflows
 
-In the Local Console UI:
+In the Local Console UI, work through the numbered tabs left to right:
 
-1. Open **Policies**. Choose **New policy**, or **Use example** to fill a
-   Lead, Finance + Legal, and Client sign-off example.
-2. Set client/account and **Business step / workflow**. Add stage cards in the required order.
-   **Add parallel reviewer** puts another role in the same stage.
-3. Configure required roles only. No person or demo actor belongs in the policy.
-4. Choose **Save & activate** for a new policy. The immutable version is immediately active.
-   To reuse an existing version, choose it in **Saved policy version**:
+1. **Identities.** Pick a client (and optionally an account) and give each role a
+   simulated user (for example `FinanceController` -> `finance`). **Load example roles**
+   fills a starter set. Choose **Save identities**; the console then opens **Policies**
+   automatically. This simulates User Administration; it creates no policy version.
+   After a policy exists, the page lists any role that active policy still needs a user
+   for, with a one-click **Add** chip.
+2. **Policies.** One policy per client (or per account) holds a **default chain** that applies
+   to every business step, plus optional **step overrides** that replace it for one step.
+   Choose **New policy**, or **Use example** for a default of Lead then Finance + Legal and
+   a Gate 2 (`B07`) override that adds Client sign-off.
+   Build each chain from stage cards in the required order. **Add parallel reviewer** puts
+   another role in the same stage. Each reviewer role is a dropdown of the roles from
+   step 1, so a typo cannot create an unresolvable policy. **Add step override** picks a
+   business step from the dropdown (see below); a step can have only one override.
+   No person belongs in a policy.
+3. Choose **Save & activate** for a new policy. The immutable version is immediately active.
+   One version covers the whole set, so editing any chain creates the next version of the
+   whole policy. To reuse an existing version, choose it in **Saved policy version**:
    selection automatically activates and loads it. No extra activation click.
-5. Open **Demo identities** to separately assign simulated users to those roles
-   for the client/account. **Add roles from current policy** copies the role list;
-   enter demo users and choose **Save demo identities**. This changes no policy version.
-6. Open **Start workflow**. The selected policy's client/account/workflow fields
-   are filled in; supply the plan version and a fresh instance ID.
-7. Open **Approvals** and select the workflow. Every planned reviewer is shown:
-   ranks `1.1` and `1.2` are parallel in group 1; `2.1` waits for all of group 1.
+4. **Start workflow.** The selected policy's client and account are filled in; choose the
+   business step and supply the business plan, plan version, requester, and a fresh instance ID.
+   A line under the heading shows which chain will apply, for example "B08 will use the client
+   default chain from sunny-approvals v2". The requester is a dropdown of demo users
+   (default: a plan owner who is not an approver).
+5. **Approvals.** There is nothing to pick: every running workflow is listed as a block,
+   plus the most recent workflow so its finished steps stay visible. A block header shows
+   the business step, which rule supplied the chain (for example `client override`), and the
+   policy version. Each block shows every planned reviewer:
+   ranks `1.1` and `1.2` are parallel in stage 1; `2.1` waits for all of stage 1.
    Future steps are greyed out with disabled decision controls. Finance and Legal
-   may respond in either order; both must finish before the next group unlocks.
-   The overview uses this run's pinned snapshot, not an edited policy.
-8. Use **View pinned policy & result** to inspect the version used by that run.
+   may respond in either order; both must finish before the next stage unlocks.
+   Each block uses that run's pinned snapshot, not an edited policy. The **Latest result**
+   panel under the table shows the newest response: it updates after each decision and when
+   you press **Refresh**, and it appears only on this tab.
+6. Use **Pinned policy & result** in a block header to inspect the version used by that run.
    Selected saved policies are greyed out and read-only. **Edit** appears beside
    **New policy** only for a selected saved policy. Choose Edit to change
-   stages/reviewers, then **Save** or **Cancel**. An unchanged
+   chains or overrides, then **Save** or **Cancel**. An unchanged
    save creates no new version; real changes create the next immutable version.
    Existing workflows always keep their previous snapshot.
 
-**Acting as** is a dropdown of role/user assignments. For a selected workflow,
-the choices come from its pinned reviewers, not current editable simulator settings.
+**Acting as** is a dropdown of role/user assignments. For the workflows shown,
+the choices come from their pinned reviewers, not current editable simulator settings.
 It is a simulation, not sign-in or role authorization.
+**Test a stale decision** (collapsed under Acting as) sends a deliberately wrong plan version.
 
-Approve/Reject locks that row while the worker responds. In a selected workflow,
-finished approvals stay visible with history access but no decision controls.
-In **All waiting approvals** mode they disappear after completion.
+Approve/Reject locks that row while the worker responds. Finished approvals stay
+visible with history access but no decision controls, until their workflow is no longer
+running or the most recent. A workflow whose steps cannot be loaded shows an inline error
+without hiding the others.
 A refused decision stays waiting with an explanation and enabled controls.
 **View** only inspects status, so it leaves a waiting approval actionable.
 Future steps have no child instance/history yet, so View is disabled until started.
 If delivery is uncertain, decision controls stay locked until status is reconciled.
 
-An account policy takes priority over its client policy, then the
-`agency-default` client policy for that workflow. Missing configuration is an
-explicit error, not a silently chosen chain. Local and Azure-connected consoles
+When a workflow starts, the chain is chosen by the narrower owner first: the account's policy,
+then the client's, then `agency-default`. Inside one owner, a step override beats that
+owner's default chain. So an account policy with a default chain wins over the client's override
+for the same step; give the account policy only overrides (no default) if the account should
+inherit the client's chain for every other step. If nothing supplies a chain for the step,
+the start fails with an explicit error rather than a guessed chain. The chosen rule (for example
+`client override`) is recorded in the pinned snapshot. Local and Azure-connected consoles
 have separate JSON registry files under [approval_policies/](../approval_policies/); these survive
 console restarts, independently of the in-memory emulator.
 
@@ -184,10 +206,21 @@ edits affect new starts, not a workflow's already-resolved reviewers.
 In production, User Administration would resolve assignments and validated
 sign-in would supply the acting identity; the demo does not implement that security.
 
-The **Business step / workflow** field is a policy lookup code, not a phase:
-for example, Gate2 corresponds to business workflow B07 inside phase P3, using
-the K1 Approval & sign-off pattern. Approval stages are reviewer checkpoints
-inside that business step. The spike does not automatically load the HTML catalogue.
+The **Add step override** dropdown lists the 34 business workflows in the
+analysis whose template includes Approval & sign-off, grouped by phase. For example,
+**B07 - Tactical plan & Gate 2 approval** is in phase P3 and uses the K1 pattern.
+The list is hard-coded in [BusinessStepCatalogue.cs](../src/Approval.Console/BusinessStepCatalogue.cs)
+and served by `GET /api/business-steps`; saving an override for any other code is rejected.
+Steps that are change/re-approval only (K4), queues, timers, or integrations are excluded
+because this console does not implement those patterns. Approval stages are reviewer
+checkpoints inside the chosen business step, not campaign phases.
+The policy is keyed by business step, not by phase or capability, because the analysis reuses
+one step under several capabilities (for example `E09` under five), and a step's chain should
+follow it. One versioned set per client matches the analysis' client configuration registry
+(`CP105`: promote and roll back as a unit, record the version in force). Budget-threshold
+branches, materiality-based re-approval, a mandatory internal first approver, and
+effective-dated promotion are not implemented yet and would extend a chain, not this model.
+A production system would read the catalogue from the workflow registry instead of this list.
 
 The one-time worker deployment enables this behavior. After that, saving and
 activating configuration does not restart the worker or change its image.
@@ -257,11 +290,17 @@ B's parallel reviews, wait-all rejection, timeout, and no remaining waiting chil
 
 The first four entries are retained earlier single-approval results, not a production SLA.
 The current policy-run test records its own summary under `.build/evidence/policy-demo-*`.
-The integrated automated test suite passes 138 tests, including ranked
-parallel/blocked/completed projections, server-side current-group guards, unchanged-save
-deduplication, automatic activation, and simulator identity changes without policy
-version changes or mutation of running snapshots. Roles-only policy starts were
-also verified against both existing local and AKS workers.
+The integrated automated test suite passes 148 tests, including ranked
+parallel/blocked/completed projections, server-side current-stage guards, unchanged-save
+deduplication, automatic activation, business-step catalogue validation, default-and-override
+resolution (narrower owner first), and simulator
+identity changes without policy version changes or mutation of running snapshots.
+Roles-only policy starts were also verified against both existing local and AKS workers.
+After the policy-set change, `scripts/test-policy.sh` and `scripts/test-console.sh` were re-run
+against the local emulator and worker using throwaway policy and identity stores: sequential,
+parallel out-of-order, hot-edit isolation, wait-all rejection, timeout, a default chain applied
+to a second business step (`B08`), and an override replacing it for `B07` all passed.
+The AKS worker image was not changed: the pinned snapshot only gained an optional `source` field.
 
 ## Limits
 

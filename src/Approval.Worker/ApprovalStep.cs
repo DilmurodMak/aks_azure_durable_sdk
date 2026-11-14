@@ -8,10 +8,10 @@ public sealed class ApprovalStep : TaskOrchestrator<ApprovalRequest, ApprovalRes
 {
     public override async Task<ApprovalResult> RunAsync(TaskOrchestrationContext context, ApprovalRequest input)
     {
-        ApprovalValidation.Validate(input);
+        ArgumentNullException.ThrowIfNull(input);
+        input.Validate();
         await context.CallActivityAsync<string>(nameof(RecordSubmission), input);
-        ApprovalProgress progress = new("Waiting", input.Step?.Stage ?? input.Approver,
-            input.Step?.StageNumber ?? 1, input.Step?.StageCount ?? 1);
+        ApprovalProgress progress = new("Waiting", input.Step.Stage, input.Step.StageNumber, input.Step.StageCount);
         context.SetCustomStatus(progress);
         ILogger logger = context.CreateReplaySafeLogger<ApprovalStep>();
 
@@ -29,7 +29,7 @@ public sealed class ApprovalStep : TaskOrchestrator<ApprovalRequest, ApprovalRes
                 if (await Task.WhenAny(timer, decisionTask) == timer)
                 {
                     await timer;
-                    result = new ApprovalResult("Timeout", input.Version, null);
+                    result = new ApprovalResult("Timeout", input.Version);
                     break;
                 }
 
@@ -43,7 +43,7 @@ public sealed class ApprovalStep : TaskOrchestrator<ApprovalRequest, ApprovalRes
                     continue;
                 }
 
-                result = new ApprovalResult(status, input.Version, null);
+                result = new ApprovalResult(status, input.Version);
                 break;
             }
         }
@@ -61,8 +61,8 @@ public sealed class ApprovalStep : TaskOrchestrator<ApprovalRequest, ApprovalRes
         }
 
         context.SetCustomStatus(progress with { State = result.Status, Completed = 1 });
-        logger.LogInformation("Instance {InstanceId} finished with {Status}, version {Version}, receipt {Receipt}",
-            context.InstanceId, result.Status, result.Version, result.Receipt);
+        logger.LogInformation("Instance {InstanceId} finished with {Status}, version {Version}",
+            context.InstanceId, result.Status, result.Version);
         return result;
     }
 
@@ -116,11 +116,7 @@ public sealed class ApplyDecision(ILogger<ApplyDecision> logger)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Receipt);
-        if (input.DelaySeconds is < 0 or > 60)
-        {
-            throw new ArgumentException("DelaySeconds must be between zero and 60.");
-        }
-
+        ApprovalRules.ValidateDelay(input.DelaySeconds);
         logger.LogInformation("ApplyDecision attempt instance={InstanceId} receipt={Receipt} delaySeconds={DelaySeconds}",
             context.InstanceId, input.Receipt, input.DelaySeconds);
         await Task.Delay(TimeSpan.FromSeconds(input.DelaySeconds));

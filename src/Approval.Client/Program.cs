@@ -45,6 +45,11 @@ catch (ArgumentException exception)
     Console.Error.WriteLine($"Input/configuration error: {exception.Message}\n{ClientCommand.Usage}");
     return 2;
 }
+catch (KeyNotFoundException exception)
+{
+    Console.Error.WriteLine($"Not found: {exception.Message}");
+    return 1;
+}
 catch (InvalidOperationException exception)
 {
     Console.Error.WriteLine($"Request rejected: {exception.Message}");

@@ -12,7 +12,7 @@ public sealed class ApprovalChainTests
         [
             new("Review", 15, [new("finance", "assigned-finance"), new("legal", "assigned-legal")]),
             new("Release", 30, [new("owner", "assigned-owner")])
-        ]), 12);
+        ], "client default"), 12);
 
     [Fact]
     public async Task RolesRunInParallelButStagesAreOrderedAndReceiptWaitsForEveryApproval()
@@ -115,7 +115,6 @@ public sealed class ApprovalChainTests
             Assert.Equal(request.PlanId, child.Request.PlanId);
             Assert.Equal(request.Version, child.Request.Version);
             Assert.Equal(request.Requester, child.Request.Requester);
-            Assert.Equal(request.ApplyDecisionDelaySeconds, child.Request.ApplyDecisionDelaySeconds);
             Dictionary<string, string> expectedTags = ApprovalTags.Create("client", "plan-approval",
                 "sunny-soda", 3, "policy-chain", stage, "policy", 7, "chain-001");
             Assert.Equal(expectedTags.OrderBy(tag => tag.Key), child.Options.Tags!.OrderBy(tag => tag.Key));
@@ -302,7 +301,7 @@ public sealed class ApprovalChainTests
         public SubOrchestrationOptions Options { get; } = options;
         public TaskCompletionSource<ApprovalResult> Completion { get; } = new();
 
-        public void Complete(string status) => Completion.SetResult(new(status, Request.Version, null));
+        public void Complete(string status) => Completion.SetResult(new(status, Request.Version));
     }
 
     private sealed class Harness
