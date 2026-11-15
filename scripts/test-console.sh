@@ -100,9 +100,18 @@ wait_for "$prefix-timeout" Timeout
 jq -e '.result.receipt==null' "$evidence/$prefix-timeout.status.json" >/dev/null
 check_child "$prefix-timeout" Timeout
 start "$prefix-reject" 2
-post "/api/approvals/$prefix-reject-s1-r1/decision" '{"actingAs":"finance","outcome":"Reject","version":3}' \
+# A rejection needs a reason: the API refuses it without one and nothing is sent to the workflow.
+no_comment="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 60 \
+  --header 'Content-Type: application/json' --header 'X-Approval-Console: spike' \
+  --data '{"actingAs":"finance","outcome":"Reject","version":3}' "$base/api/approvals/$prefix-reject-s1-r1/decision")"
+[ "$no_comment" = 400 ]
+post "/api/approvals/$prefix-reject-s1-r1/decision" \
+  '{"actingAs":"finance","outcome":"Reject","version":3,"comment":"Budget is wrong"}' \
   > "$evidence/reject-decision.json"
 wait_for "$prefix-reject" Rejected
 jq -e '.result.receipt==null' "$evidence/$prefix-reject.status.json" >/dev/null
+jq -e '.result.steps[0].status=="Rejected" and .result.steps[0].decidedBy=="finance" and
+  .result.steps[0].comment=="Budget is wrong" and (.result.steps[0].decidedAt|length)>0' \
+  "$evidence/$prefix-reject.status.json" >/dev/null
 check_child "$prefix-reject" Rejected
 printf 'PASS: saved Finance policies start workflows; four invalid child decisions keep one timer; parent Approve has the only receipt, Reject/Timeout have none. Evidence: %s\n' "$evidence"

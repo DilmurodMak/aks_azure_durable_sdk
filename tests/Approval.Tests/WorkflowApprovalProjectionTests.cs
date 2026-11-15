@@ -11,7 +11,7 @@ namespace Approval.Tests;
 public sealed class WorkflowApprovalProjectionTests
 {
     private static readonly DataConverter Converter = new JsonDataConverter(ApprovalJson.CreateSerializerOptions());
-    private static ApprovalChainRequest Input => new("sunny-soda", 3, "requester",
+    private static ApprovalChainRequest Input => new("sunny-soda", 3, "requester", "corr-001",
         new("policy", "client", null, "B07", 7,
         [
             new("parallel-review", 15, [new("Finance", "finance"), new("Legal", "legal")]),
@@ -146,6 +146,57 @@ public sealed class WorkflowApprovalProjectionTests
             "run-s1-r2", "Decision", It.IsAny<object?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    private static readonly DateTimeOffset DecidedAt = new(2026, 11, 14, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task ARejectedChainShowsWhoDecidedWhyAndNeverStartedTheLaterStage()
+    {
+        var (client, instances) = Client(OrchestrationRuntimeStatus.Completed);
+        instances["run-s1-r1"] = Child(1, 1, OrchestrationRuntimeStatus.Completed, "Rejected");
+        instances["run-s1-r2"] = Child(1, 2, OrchestrationRuntimeStatus.Completed, "Canceled");
+        var rows = await Service(client).StepsAsync("run", default);
+
+        Assert.Equal(["Rejected", "Canceled", "NotStarted"], rows.Select(row => row.State));
+        Assert.Equal("finance", rows[0].DecidedBy);
+        Assert.Equal(DecidedAt, rows[0].DecidedAt);
+        Assert.Equal("Needs work", rows[0].Comment);
+        Assert.Null(rows[1].DecidedBy);
+        Assert.Null(rows[2].DecidedAt);
+        Assert.False(rows[2].CanView);
+        Assert.All(rows, row => Assert.False(row.CanDecide));
+    }
+
+    [Fact]
+    public async Task ARejectionOrReturnWithoutACommentIsRefusedBeforeAnythingIsSignaled()
+    {
+        var (client, instances) = Client();
+        instances["run-s1-r1"] = Child(1, 1, OrchestrationRuntimeStatus.Running);
+
+        foreach (string outcome in new[] { "Reject", "Return" })
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() => ClientOperations.ExecuteAsync(client.Object,
+                new("decide", "run-s1-r1", new("finance", outcome, 3, "  ")), default));
+        }
+
+        client.Verify(item => item.RaiseEventAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ADecisionWithACommentIsRaisedAsTheDecisionEvent()
+    {
+        var (client, instances) = Client();
+        instances["run-s1-r1"] = Child(1, 1, OrchestrationRuntimeStatus.Running);
+        Decision sent = new("finance", "Return", 3, "Add the budget");
+        client.Setup(item => item.RaiseEventAsync(
+            "run-s1-r1", "Decision", sent, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        await ClientOperations.ExecuteAsync(client.Object, new("decide", "run-s1-r1", sent), default);
+
+        client.Verify(item => item.RaiseEventAsync(
+            "run-s1-r1", "Decision", sent, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static ApprovalChainService Service(Mock<DurableTaskClient> client) =>
         new(client.Object, Mock.Of<IPolicyStore>(), Mock.Of<IDemoIdentityStore>());
 
@@ -174,7 +225,7 @@ public sealed class WorkflowApprovalProjectionTests
         ResolvedPolicyStage stagePolicy = Input.Policy.Stages[stage - 1];
         ResolvedRole role = stagePolicy.Approvals[reviewer - 1];
         ApprovalRequest input = new("sunny-soda", 3, "requester", role.Approver, 15, Step:
-            new("run", "client", null, "Gate2", "policy", 7, stagePolicy.Name, stage, 2, role.Role));
+            new("run", "client", null, "B07", "policy", 7, stagePolicy.Name, stage, 2, role.Role, "corr-001"));
         return new(ApprovalNames.StepOrchestration, ApprovalNames.StepInstanceId("run", stage, reviewer))
         {
             RuntimeStatus = status,
@@ -182,7 +233,9 @@ public sealed class WorkflowApprovalProjectionTests
             SerializedInput = Converter.Serialize(input),
             SerializedCustomStatus = Converter.Serialize(new ApprovalProgress("Waiting", stagePolicy.Name, stage, 2)),
             SerializedOutput = status == OrchestrationRuntimeStatus.Completed
-                ? Converter.Serialize(new ApprovalResult(outcome, 3)) : null
+                ? Converter.Serialize(new ApprovalResult(outcome, 3,
+                    outcome is "Timeout" or "Canceled" ? null : role.Approver, DecidedAt,
+                    outcome is "Rejected" or "Returned" ? "Needs work" : null)) : null
         };
     }
 }

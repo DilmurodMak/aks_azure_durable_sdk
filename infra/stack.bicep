@@ -94,6 +94,14 @@ module scheduler './modules/scheduler.bicep' = {
   }
 }
 
+module monitoring './modules/monitoring.bicep' = {
+  params: {
+    name: '${environmentName}-${suffix}'
+    location: location
+    tags: tags
+  }
+}
+
 output configuration SpikeConfiguration = {
   resourceGroupName: resourceGroup().name
   clusterName: clusterName
@@ -111,4 +119,6 @@ output configuration SpikeConfiguration = {
   workerServiceAccountName: workerServiceAccountName
   outboundIpAddress: network.outputs.outboundIpAddress
   allowedSourceCidrs: allowedSourceCidrs
+  applicationInsightsName: monitoring.outputs.name
+  applicationInsightsResourceId: monitoring.outputs.resourceId
 }

@@ -87,6 +87,8 @@ button.primary { padding: 0.65rem 1.4rem; border-color: var(--brand); background
 button.primary:hover:not(:disabled) { background: var(--brand-dark); border-color: var(--brand-dark); }
 button.approve { border-color: #9fd3b9; background: var(--ok-soft); color: var(--ok); }
 button.approve:hover:not(:disabled) { background: #d2eedf; border-color: #7cc3a0; }
+button.return { border-color: #e6cf8c; background: var(--warn-soft); color: var(--warn); }
+button.return:hover:not(:disabled) { background: #ffeab3; border-color: #d9b860; }
 button.reject { border-color: #e5b3b8; background: var(--bad-soft); color: var(--bad); }
 button.reject:hover:not(:disabled) { background: #fbdde0; border-color: #d98f97; }
 button.compact { min-width: 2.5rem; min-height: 2.5rem; padding: 0.4rem; }
@@ -152,6 +154,11 @@ tr[data-state="Waiting"] td:first-child { border-left-color: #e0a020; }
 .approval-inactive { background: #f5f6f9; color: #66758f; }
 .approval-finished { background: #f6faf8; }
 .approval-finished[data-state="Rejected"], .approval-finished[data-state="Failed"], .approval-finished[data-state="Timeout"] { background: #fff7f5; }
+.approval-finished[data-state="Returned"] { background: #fffbee; }
+.approval-finished[data-state="Canceled"], .approval-finished[data-state="NotStarted"] { background: #f5f6f9; color: #66758f; }
+.decision-comment { width: 100%; min-width: 14rem; margin-bottom: 0.5rem; }
+.decision-note { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.decision-note q { color: var(--ink); font-style: italic; }
 .cell-main { display: block; font-weight: 650; }
 .cell-sub { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.88rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88rem; }
@@ -160,6 +167,8 @@ tr[data-state="Waiting"] td:first-child { border-left-color: #e0a020; }
 .state-Running, .state-Pending { background: var(--brand-soft); color: #28459f; }
 .state-Approved, .state-Completed { background: var(--ok-soft); color: var(--ok); }
 .state-Rejected, .state-Timeout, .state-Failed, .state-Terminated { background: var(--bad-soft); color: var(--bad); }
+.state-Returned { background: var(--warn-soft); color: var(--warn); }
+.state-Canceled, .state-NotStarted { background: #edf0f5; color: var(--muted); }
 .workflow-header td { padding: 0.9rem 1rem; border-bottom: 1px solid #cdd9f3; background: #e9effc; color: #2a3b61; font-weight: 400; font-size: 1rem; }
 .workflow-header:not(:first-child) td { border-top: 1.2rem solid var(--surface); }
 .workflow-header td:first-child { border-left: 0; color: inherit; font-size: inherit; font-weight: 400; white-space: normal; }
@@ -192,6 +201,9 @@ pre { max-height: 26rem; margin: 0.8rem 0 0; padding: 1rem 1.1rem; overflow: aut
   tr[data-state="Waiting"] { background: #fffbee; }
   tr.approval-inactive { background: #f5f6f9; }
   tr.approval-finished { background: #f6faf8; }
+  tr.approval-finished[data-state="Rejected"], tr.approval-finished[data-state="Timeout"] { background: #fff7f5; }
+  tr.approval-finished[data-state="Returned"] { background: #fffbee; }
+  tr.approval-finished[data-state="Canceled"], tr.approval-finished[data-state="NotStarted"] { background: #f5f6f9; }
   td { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 0.75rem; align-items: center; padding: 0.65rem 1rem; border-bottom: 1px solid #edf1f7; }
   td::before { content: attr(data-label); color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
   td:last-child { border-bottom: 0; }

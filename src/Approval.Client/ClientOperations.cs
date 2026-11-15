@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Approval.Contracts;
@@ -41,9 +42,13 @@ public static class ClientOperations
 
             Decision decision = command.Decision
                 ?? throw new ArgumentException("Decide requires an explicit decision.");
+            if (ApprovalRules.CommentProblem(decision.Outcome, decision.Comment) is { } commentProblem)
+                throw new ArgumentException(commentProblem);
             ApprovalRequest input = metadata.ReadInputAs<ApprovalRequest>()
                 ?? throw new InvalidDataException("Approval input is missing.");
             ApprovalStepContext step = input.Step;
+            using Activity? span = ApprovalTelemetry.StartSpan("approval.decision.sent", input.Tags("decision"),
+                ("actingAs", decision.Approver ?? string.Empty), ("outcome", decision.Outcome ?? string.Empty));
             OrchestrationMetadata parent = await client.GetInstanceAsync(
                 step.ParentInstanceId, true, cancellation)
                 ?? throw new InvalidOperationException("Parent workflow was not found.");

@@ -31,6 +31,7 @@ start() {
   post /api/workflows "$(jq -nc --arg id "$1" --arg client "$prefix" --arg step "${2:-B07}" \
     '{instanceId:$id,clientId:$client,workflowCode:$step,planId:"sunny-soda",version:3,requester:"requester"}')" \
     > "$evidence/$1.start.json"
+  jq -e --arg client "$prefix" '(.correlationId|length)>0' "$evidence/$1.start.json" >/dev/null
 }
 waiting() {
   local id="$1" count="$2" deadline=$((SECONDS+90))
@@ -42,9 +43,10 @@ waiting() {
   printf 'ERROR: %s did not show %s waiting children.\n' "$id" "$count" >&2; exit 1
 }
 decide() {
-  local id="$1" actor="$2" outcome="${3:-Approve}" child
+  local id="$1" actor="$2" outcome="${3:-Approve}" comment="${4:-}" child
   child="$(jq -er --arg actor "$actor" '.[]|select(.approver==$actor)|.instanceId' "$evidence/$id.waiting.json")"
-  post "/api/approvals/$child/decision" "{\"actingAs\":\"$actor\",\"outcome\":\"$outcome\",\"version\":3}" \
+  post "/api/approvals/$child/decision" "$(jq -nc --arg actor "$actor" --arg outcome "$outcome" --arg comment "$comment" \
+    '{actingAs:$actor,outcome:$outcome,version:3} + (if $comment=="" then {} else {comment:$comment} end)')" \
     > "$evidence/$child.decision.json"
 }
 complete() {
@@ -84,15 +86,28 @@ waiting "$a" 1
 decide "$a" legal
 complete "$a" Approved
 
+# A rejection ends the plan at once: the reviewer still waiting in the stage is canceled, nothing is applied.
 c="$prefix-reject"
 start "$c"
 waiting "$c" 2
-decide "$c" finance Reject
-waiting "$c" 1
-get "/api/workflows/$c" | jq -e '.runtimeStatus=="Running" and .result==null' >/dev/null
-decide "$c" legal
+decide "$c" finance Reject "Budget is wrong"
 complete "$c" Rejected
-jq -e '.result.receipt==null' "$evidence/$c.result.json" >/dev/null
+jq -e '.result.receipt==null and (.result.steps|map(.status))==["Rejected","Canceled"] and
+  .result.steps[0].decidedBy=="finance" and .result.steps[0].comment=="Budget is wrong" and
+  (.result.steps[0].decidedAt|length)>0 and .result.stagesNotStarted==[]' "$evidence/$c.result.json" >/dev/null
+get "/api/approvals/$c-s1-r2?history=true" | jq -e '.runtimeStatus=="Completed" and .result.status=="Canceled" and
+  any(.history[]; .eventType=="EventRaised" and .name=="Cancel")' >/dev/null
+
+# Separation of duties: a requester who holds a required role is refused at start and nothing is scheduled.
+sod="$prefix-sod"
+code="$(curl --silent --output "$evidence/sod.json" --write-out '%{http_code}' --max-time 60 \
+  --header 'Content-Type: application/json' --header 'X-Approval-Console: spike' \
+  --data "$(jq -nc --arg id "$sod" --arg client "$prefix" \
+    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"finance"}')" \
+  "$base/api/workflows")"
+[ "$code" = 409 ]
+jq -e '.title|test("holds the required role")' "$evidence/sod.json" >/dev/null
+if get "/api/workflows/$sod" >/dev/null 2>&1; then printf 'ERROR: %s was scheduled.\n' "$sod" >&2; exit 1; fi
 
 policy 3 '[{"name":"expire","roles":["Finance","Legal"],"timeoutMinutes":0.1}]'
 d="$prefix-timeout"
@@ -142,7 +157,7 @@ decide "$f" finance
 complete "$f" Approved
 jq -n --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg base "$base" \
   '{completedAt:$completedAt,base:$base,sequential:"Pass",parallelOutOfOrder:"Pass",
-    hotEditSnapshotIsolation:"Pass",waitAllOnRejection:"Pass",timeout:"Pass",
+    hotEditSnapshotIsolation:"Pass",rejectionEndsChain:"Pass",separationOfDuties:"Pass",timeout:"Pass",
     defaultAppliesToAnotherStep:"Pass",stepOverrideReplacesDefaultForOneStep:"Pass",
     waitingChildrenAfterCompletion:0}' > "$evidence/summary.json"
 cat "$evidence/summary.json"

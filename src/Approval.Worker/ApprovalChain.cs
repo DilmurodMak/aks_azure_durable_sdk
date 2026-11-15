@@ -13,9 +13,12 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
         int total = policy.Stages.Sum(stage => stage.Approvals.Length);
         int completed = 0;
         List<ApprovalStepResult> steps = [];
+        string? endedWith = null;
+        int lastStage = 0;
 
-        for (int stageIndex = 0; stageIndex < policy.Stages.Length; stageIndex++)
+        for (int stageIndex = 0; stageIndex < policy.Stages.Length && endedWith is null; stageIndex++)
         {
+            lastStage = stageIndex + 1;
             ResolvedPolicyStage stage = policy.Stages[stageIndex];
             ApprovalProgress progress = new("Running", stage.Name, stageIndex + 1, policy.Stages.Length,
                 completed, total);
@@ -27,12 +30,10 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
                 string instanceId = ApprovalNames.StepInstanceId(context.InstanceId, stageIndex + 1, roleIndex + 1);
                 ApprovalStepContext step = new(context.InstanceId, policy.ClientId, policy.AccountId,
                     policy.WorkflowCode, policy.Id, policy.Version, stage.Name, stageIndex + 1,
-                    policy.Stages.Length, role.Role);
+                    policy.Stages.Length, role.Role, input.CorrelationId);
                 ApprovalRequest request = new(input.PlanId, input.Version, input.Requester, role.Approver,
                     stage.TimeoutMinutes, step);
-                TaskOptions options = new(retry: null, tags: ApprovalTags.Create(
-                    policy.ClientId, policy.WorkflowCode, input.PlanId, input.Version, "policy-chain",
-                    stage.Name, policy.Id, policy.Version, context.InstanceId));
+                TaskOptions options = new(retry: null, tags: request.Tags("policy-chain"));
                 Task<ApprovalResult> child = context.CallSubOrchestratorAsync<ApprovalResult>(
                     ApprovalNames.StepOrchestration, request, new SubOrchestrationOptions(options, instanceId));
                 children.Add((instanceId, role, child));
@@ -44,6 +45,15 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
                 Task<ApprovalResult> finished = await Task.WhenAny(pending);
                 pending.Remove(finished);
                 context.SetCustomStatus(progress with { Completed = ++completed });
+                if (endedWith is null && finished.IsCompletedSuccessfully && ApprovalStatus.EndsChain(finished.Result.Status))
+                {
+                    // One rejection, return, or timeout ends the plan: stop the reviewers still waiting in this stage.
+                    endedWith = finished.Result.Status;
+                    foreach (var child in children.Where(child => !child.Task.IsCompleted))
+                    {
+                        context.SendEvent(child.InstanceId, ApprovalNames.CancelEvent, endedWith);
+                    }
+                }
             }
 
             // Observe faults only after every child in this stage has settled.
@@ -51,33 +61,35 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
             for (int roleIndex = 0; roleIndex < children.Count; roleIndex++)
             {
                 ApprovalResult result = results[roleIndex];
-                if (result.Status is not ("Approved" or "Rejected" or "Timeout"))
+                if (!ApprovalStatus.IsKnown(result.Status))
                 {
                     throw new InvalidOperationException("An approval step returned an unknown status.");
                 }
 
                 var child = children[roleIndex];
-                steps.Add(new(child.InstanceId, stage.Name, child.Role.Role, child.Role.Approver, result.Status));
+                steps.Add(new(child.InstanceId, stage.Name, child.Role.Role, child.Role.Approver, result.Status,
+                    result.DecidedBy, result.DecidedAt, result.Comment));
             }
 
             context.SetCustomStatus(progress with { Completed = completed });
         }
 
-        string status = steps.Any(step => step.Status == "Rejected") ? "Rejected"
-            : steps.Any(step => step.Status == "Timeout") ? "Timeout" : "Approved";
-        string? receipt = status == "Approved"
+        string status = endedWith ?? ApprovalStatus.Approved;
+        string[] notStarted = policy.Stages.Skip(lastStage).Select(stage => stage.Name).ToArray();
+        string? receipt = status == ApprovalStatus.Approved
             ? await context.CallActivityAsync<string>(nameof(ApplyDecision),
                 new ApplyDecisionRequest($"{input.PlanId}:v{input.Version}:approved", input.ApplyDecisionDelaySeconds))
             : null;
-        context.SetCustomStatus(new ApprovalProgress(status, policy.Stages[^1].Name, policy.Stages.Length,
+        context.SetCustomStatus(new ApprovalProgress(status, policy.Stages[lastStage - 1].Name, lastStage,
             policy.Stages.Length, completed, total));
-        return new(status, input.Version, policy.Id, policy.Version, steps.ToArray(), receipt);
+        return new(status, input.Version, policy.Id, policy.Version, steps.ToArray(), notStarted, receipt);
     }
 
     private static void Validate(ApprovalChainRequest input, string instanceId)
     {
         ArgumentNullException.ThrowIfNull(input);
         ApprovalRules.ValidatePlan(input.PlanId, input.Version, input.Requester);
+        ApprovalRules.ValidateCorrelationId(input.CorrelationId);
         ApprovalRules.ValidateDelay(input.ApplyDecisionDelaySeconds);
         ApprovalRules.ValidateParentId(instanceId);
         ResolvedApprovalPolicy policy = input.Policy;
@@ -111,5 +123,7 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
                 }
             }
         }
+
+        ApprovalRules.ValidateSeparationOfDuties(input.Requester, policy.Stages);
     }
 }

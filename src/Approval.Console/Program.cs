@@ -3,10 +3,13 @@ using System.Text.Json.Serialization;
 using Approval.Console;
 using Approval.Console.Middleware;
 using Approval.Contracts;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Converters;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 SchedulerConnection connection = SchedulerConnection.FromEnvironment();
@@ -17,6 +20,16 @@ if (!int.TryParse(portText, out int port) || port is < 1024 or > 65535)
     throw new ArgumentException("CONSOLE_PORT must be 1024-65535.");
 }
 builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, port));
+// The console starts each trace: approval.start and approval.decision.sent carry the business tags, and the
+// Durable Task client and worker spans join the same trace.
+string? insights = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("approval-console"))
+    .WithTracing(tracing =>
+    {
+        tracing.AddSource("Microsoft.DurableTask", ApprovalTelemetry.SourceName);
+        if (!string.IsNullOrWhiteSpace(insights)) tracing.AddAzureMonitorTraceExporter(options => options.ConnectionString = insights);
+    });
 builder.Services.AddSingleton<DataConverter>(new JsonDataConverter(ApprovalJson.CreateSerializerOptions()));
 builder.Services.AddDurableTaskClient(options => options.UseDurableTaskScheduler(connection.ConnectionString));
 builder.Services.AddScoped<IApprovalConsoleService, ApprovalConsoleService>();

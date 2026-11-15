@@ -11,9 +11,12 @@ namespace Approval.Tests;
 
 public sealed class ApprovalStepTests
 {
-    private static readonly ApprovalRequest Request = new("sunny-soda", 3, "requester", "finance", 15,
-        new ApprovalStepContext("chain-001", "client", null, "B07", "policy", 1, "finance", 1, 1, "Finance"));
     private static readonly DateTime Start = new(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly ApprovalRequest Request = new("sunny-soda", 3, "requester", "finance", 15,
+        new ApprovalStepContext("chain-001", "client", null, "B07", "policy", 1, "finance", 1, 1, "Finance", "corr-001"));
+    private static readonly DateTimeOffset StartOffset = new(Start);
+    private static ApprovalResult Approved => new("Approved", 3, "finance", StartOffset);
+    private static ApprovalResult TimedOut => new("Timeout", 3, DecidedAt: StartOffset);
     private static readonly ApprovalProgress Waiting = new("Waiting", "finance", 1, 1);
 
     [Theory]
@@ -57,7 +60,7 @@ public sealed class ApprovalStepTests
         validDecision.SetResult(new Decision("FINANCE", "Approve", 3));
         ApprovalResult result = await workflow;
 
-        Assert.Equal(new ApprovalResult("Approved", 3), result);
+        Assert.Equal(Approved, result);
         Assert.True(timerToken.IsCancellationRequested);
         context.Verify(item => item.CreateTimer(Start.AddMinutes(15), It.IsAny<CancellationToken>()), Times.Once);
         context.Verify(item => item.SetCustomStatus(Waiting), Times.Once);
@@ -77,11 +80,11 @@ public sealed class ApprovalStepTests
         context.SetupSequence(item => item.WaitForExternalEvent<Decision>(
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Decision)null!)
-            .ReturnsAsync(new Decision("finance", "Reject", 3));
+            .ReturnsAsync(new Decision("finance", "Reject", 3, " Budget is wrong "));
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Rejected", 3), result);
+        Assert.Equal(new ApprovalResult("Rejected", 3, "finance", StartOffset, "Budget is wrong"), result);
         Assert.True(timerToken.IsCancellationRequested);
         context.Verify(item => item.WaitForExternalEvent<Decision>(
             ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()), Times.Exactly(2));
@@ -135,7 +138,7 @@ public sealed class ApprovalStepTests
         timer.SetResult();
         ApprovalResult result = await workflow;
 
-        Assert.Equal(new ApprovalResult("Timeout", 3), result);
+        Assert.Equal(new ApprovalResult("Timeout", 3, DecidedAt: StartOffset.AddMinutes(5)), result);
         Assert.True(eventToken.IsCancellationRequested);
         Assert.Equal([Waiting, Waiting with { State = "Timeout", Completed = 1 }], statuses);
         context.Verify(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -155,7 +158,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Timeout", 3), result);
+        Assert.Equal(TimedOut, result);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -174,7 +177,7 @@ public sealed class ApprovalStepTests
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
 
-        Assert.Equal(new ApprovalResult("Timeout", 3), result);
+        Assert.Equal(TimedOut, result);
         Assert.True(eventToken.IsCancellationRequested);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
@@ -251,7 +254,7 @@ public sealed class ApprovalStepTests
             .ThrowsAsync(new InvalidOperationException("Apply failed"));
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
-        Assert.Equal(new ApprovalResult("Approved", 3), result);
+        Assert.Equal(Approved, result);
         context.Verify(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()), Times.Never);
     }
@@ -259,18 +262,19 @@ public sealed class ApprovalStepTests
     [Theory]
     [InlineData("Approve", "Approved")]
     [InlineData("Reject", "Rejected")]
+    [InlineData("Return", "Returned")]
     public async Task ChainChildUsesItsStageAndNeverAppliesBusinessDecision(string outcome, string state)
     {
         Mock<TaskOrchestrationContext> context = CreateContext();
         ApprovalStepContext step = new("chain-001", "client", "account", "workflow", "policy", 2,
-            "Legal-review", 2, 3, "legal");
+            "Legal-review", 2, 3, "legal", "corr-001");
         context.Setup(item => item.WaitForExternalEvent<Decision>(
                 ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Decision("finance", outcome, 3));
+            .ReturnsAsync(new Decision("finance", outcome, 3, "Because"));
 
         ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request with { Step = step });
 
-        Assert.Equal(new ApprovalResult(state, 3), result);
+        Assert.Equal(new ApprovalResult(state, 3, "finance", StartOffset, "Because"), result);
         context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Waiting", "Legal-review", 2, 3)), Times.Once);
         context.Verify(item => item.SetCustomStatus(new ApprovalProgress(state, "Legal-review", 2, 3, 1)), Times.Once);
         context.Verify(item => item.CallActivityAsync<string>(
@@ -353,9 +357,10 @@ public sealed class ApprovalStepTests
     [InlineData("role")]
     [InlineData("number")]
     [InlineData("count")]
+    [InlineData("correlation")]
     public async Task InvalidStepMetadataCannotBypassBusinessApplication(string invalid)
     {
-        ApprovalStepContext step = new("chain-001", "client", null, "workflow", "policy", 1, "review", 1, 1, "finance");
+        ApprovalStepContext step = new("chain-001", "client", null, "workflow", "policy", 1, "review", 1, 1, "finance", "corr-001");
         step = invalid switch
         {
             "parent" => step with { ParentInstanceId = new string('p', 81) },
@@ -367,6 +372,7 @@ public sealed class ApprovalStepTests
             "stage" => step with { Stage = "" },
             "role" => step with { Role = "" },
             "number" => step with { StageNumber = 2 },
+            "correlation" => step with { CorrelationId = "bad id" },
             _ => step with { StageCount = 11 }
         };
         Mock<TaskOrchestrationContext> context = CreateContext();
@@ -379,6 +385,152 @@ public sealed class ApprovalStepTests
         context.Verify(item => item.SetCustomStatus(It.IsAny<object?>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("Reject", null)]
+    [InlineData("Reject", "")]
+    [InlineData("Return", "   ")]
+    [InlineData("Approve", "x")]
+    public async Task RejectingOrReturningNeedsACommentOtherwiseTheDecisionIsRefused(string outcome, string? comment)
+    {
+        Mock<ILogger> logger = new();
+        Mock<TaskOrchestrationContext> context = CreateContext(logger.Object);
+        bool valid = outcome == "Approve";
+        TaskCompletionSource<Decision> next = new();
+        context.SetupSequence(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", outcome, 3, comment))
+            .Returns(next.Task);
+
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
+
+        Assert.Equal(valid, workflow.IsCompleted);
+        if (valid)
+        {
+            Assert.Equal("Approved", (await workflow).Status);
+            return;
+        }
+
+        VerifyLog(logger, LogLevel.Warning, "RefusedComment", Times.Once());
+        next.SetResult(new Decision("finance", outcome, 3, "Here is why"));
+        Assert.Equal(outcome == "Reject" ? "Rejected" : "Returned", (await workflow).Status);
+    }
+
+    [Fact]
+    public async Task ACommentOverTheLimitIsRefused()
+    {
+        Mock<ILogger> logger = new();
+        Mock<TaskOrchestrationContext> context = CreateContext(logger.Object);
+        TaskCompletionSource<Decision> next = new();
+        context.SetupSequence(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", "Approve", 3, new string('x', ApprovalRules.MaxCommentLength + 1)))
+            .Returns(next.Task);
+
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
+
+        Assert.False(workflow.IsCompleted);
+        VerifyLog(logger, LogLevel.Warning, "RefusedComment", Times.Once());
+        next.SetResult(new Decision("finance", "Approve", 3, "Fine"));
+        Assert.Equal("Fine", (await workflow).Comment);
+    }
+
+    [Fact]
+    public async Task AFinishedStepRecordsWhoWhatWhenAndWhyBeforeItReturns()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        List<string> order = [];
+        context.Setup(item => item.CallActivityAsync<string>(
+                nameof(RecordDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()))
+            .Callback<TaskName, object?, TaskOptions?>((_, _, _) => order.Add("recorded"))
+            .ReturnsAsync("recorded");
+        context.Setup(item => item.SetCustomStatus(It.IsAny<object?>()))
+            .Callback<object?>(status =>
+            {
+                if (status is ApprovalProgress { State: "Returned" }) order.Add("status");
+            });
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("FINANCE", "Return", 3, "Add the budget"));
+
+        ApprovalResult result = await new ApprovalStep().RunAsync(context.Object, Request);
+
+        ApprovalResult expected = new("Returned", 3, "finance", StartOffset, "Add the budget");
+        Assert.Equal(expected, result);
+        Assert.Equal(["recorded", "status"], order);
+        context.Verify(item => item.CallActivityAsync<string>(
+            nameof(RecordDecision), new RecordDecisionRequest(Request, expected), It.IsAny<TaskOptions?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ACancelEventEndsTheWaitWithoutADeciderAndStopsTheTimer()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        TaskCompletionSource<string> cancel = new();
+        CancellationToken timerToken = default;
+        context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .Callback<DateTime, CancellationToken>((_, token) => timerToken = token)
+            .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
+        context.Setup(item => item.WaitForExternalEvent<string>(
+                ApprovalNames.CancelEvent, It.IsAny<CancellationToken>())).Returns(cancel.Task);
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((_, token) => PendingUntilCanceled<Decision>(token));
+
+        Task<ApprovalResult> workflow = new ApprovalStep().RunAsync(context.Object, Request);
+        Assert.False(workflow.IsCompleted);
+        cancel.SetResult("Rejected");
+        ApprovalResult result = await workflow;
+
+        ApprovalResult expected = new("Canceled", 3, DecidedAt: StartOffset);
+        Assert.Equal(expected, result);
+        Assert.True(timerToken.IsCancellationRequested);
+        context.Verify(item => item.CallActivityAsync<string>(
+            nameof(RecordDecision), new RecordDecisionRequest(Request, expected), It.IsAny<TaskOptions?>()), Times.Once);
+        context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Canceled", "finance", 1, 1, 1)), Times.Once);
+    }
+
+    [Fact]
+    public async Task RecordingFailureFailsTheStepInsteadOfLosingTheRecord()
+    {
+        Mock<TaskOrchestrationContext> context = CreateContext();
+        context.Setup(item => item.CallActivityAsync<string>(
+                nameof(RecordDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()))
+            .ThrowsAsync(new InvalidOperationException("Record failed"));
+        context.Setup(item => item.WaitForExternalEvent<Decision>(
+                ApprovalNames.DecisionEvent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Decision("finance", "Approve", 3));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new ApprovalStep().RunAsync(context.Object, Request));
+
+        context.Verify(item => item.SetCustomStatus(new ApprovalProgress("Approved", "finance", 1, 1, 1)), Times.Never);
+    }
+
+    [Fact]
+    public async Task RecordDecisionLogsTheFullRecordIncludingTheComment()
+    {
+        Mock<ILogger<RecordDecision>> logger = new();
+        Mock<TaskActivityContext> context = new();
+        context.SetupGet(item => item.InstanceId).Returns("chain-001-s1-r1");
+        ApprovalResult result = new("Rejected", 3, "finance", StartOffset, "Budget is wrong");
+
+        string status = await new RecordDecision(logger.Object).RunAsync(
+            context.Object, new RecordDecisionRequest(Request, result));
+
+        Assert.Equal("Rejected", status);
+        VerifyLog(logger, LogLevel.Information, "Decision recorded", Times.Once());
+        VerifyLog(logger, LogLevel.Information, "Budget is wrong", Times.Once());
+        VerifyLog(logger, LogLevel.Information, "corr-001", Times.Once());
+    }
+
+    [Fact]
+    public async Task RecordDecisionRejectsAnUnknownStatus()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => new RecordDecision(Mock.Of<ILogger<RecordDecision>>())
+            .RunAsync(Mock.Of<TaskActivityContext>(),
+                new RecordDecisionRequest(Request, new ApprovalResult("Maybe", 3))));
+    }
+
     [Fact]
     public void ConverterReadsLowerCaseDecisionsButPreservesPascalCaseSerialization()
     {
@@ -388,7 +540,7 @@ public sealed class ApprovalStepTests
 
         Assert.Equal(new Decision("finance", "Approve", 3), decision);
         using JsonDocument payload = JsonDocument.Parse(converter.Serialize(decision)!);
-        Assert.Equal(["Approver", "Outcome", "Version"],
+        Assert.Equal(["Approver", "Outcome", "Version", "Comment"],
             payload.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
         Assert.Null(ApprovalJson.CreateSerializerOptions().PropertyNamingPolicy);
     }
@@ -483,12 +635,24 @@ public sealed class ApprovalStepTests
         context.Setup(item => item.CallActivityAsync<string>(
             nameof(RecordSubmission), It.IsAny<object?>(), It.IsAny<TaskOptions?>())).ReturnsAsync("sunny-soda");
         context.Setup(item => item.CallActivityAsync<string>(
+            nameof(RecordDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>())).ReturnsAsync("recorded");
+        context.Setup(item => item.CallActivityAsync<string>(
             nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()))
             .ReturnsAsync("sunny-soda:v3:approved");
+        context.Setup(item => item.WaitForExternalEvent<string>(
+                ApprovalNames.CancelEvent, It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((_, token) => PendingUntilCanceled<string>(token));
         context.Setup(item => item.CreateReplaySafeLogger<ApprovalStep>()).Returns(logger ?? NullLogger.Instance);
         context.Setup(item => item.CreateTimer(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .Returns<DateTime, CancellationToken>((_, token) => CancelableTimer(token));
         return context;
+    }
+
+    private static Task<T> PendingUntilCanceled<T>(CancellationToken token)
+    {
+        TaskCompletionSource<T> pending = new();
+        token.Register(() => pending.TrySetCanceled(token));
+        return pending.Task;
     }
 
     private static Task CancelableTimer(CancellationToken token)

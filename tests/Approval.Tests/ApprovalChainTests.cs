@@ -7,7 +7,7 @@ namespace Approval.Tests;
 
 public sealed class ApprovalChainTests
 {
-    private static ApprovalChainRequest Request => new("sunny-soda", 3, "requester",
+    private static ApprovalChainRequest Request => new("sunny-soda", 3, "requester", "corr-001",
         new ResolvedApprovalPolicy("policy", "client", "account", "plan-approval", 7,
         [
             new("Review", 15, [new("finance", "assigned-finance"), new("legal", "assigned-legal")]),
@@ -45,6 +45,7 @@ public sealed class ApprovalChainTests
         Assert.Equal("policy", result.PolicyId);
         Assert.Equal(7, result.PolicyVersion);
         Assert.Equal("sunny-soda:v3:approved", result.Receipt);
+        Assert.Empty(result.StagesNotStarted);
         Assert.Equal(["finance", "legal", "owner"], result.Steps.Select(step => step.Role));
         Assert.Equal(["assigned-finance", "assigned-legal", "assigned-owner"],
             result.Steps.Select(step => step.Approver));
@@ -58,37 +59,96 @@ public sealed class ApprovalChainTests
     }
 
     [Theory]
-    [InlineData("Rejected", "Approved", "Approved", "Rejected")]
-    [InlineData("Timeout", "Approved", "Approved", "Timeout")]
-    [InlineData("Timeout", "Rejected", "Timeout", "Rejected")]
-    [InlineData("Rejected", "Timeout", "Rejected", "Rejected")]
-    [InlineData("Approved", "Approved", "Timeout", "Timeout")]
-    public async Task NegativeOutcomesWaitForAllRolesAndContinueRemainingStages(
-        string first, string second, string last, string expected)
+    [InlineData("Rejected")]
+    [InlineData("Returned")]
+    [InlineData("Timeout")]
+    public async Task ARejectionReturnOrTimeoutEndsTheChainAndCancelsTheOtherWaitingReviewers(string outcome)
     {
         Harness harness = new();
         Task<ApprovalChainResult> workflow = harness.Start(Request);
-        harness.Children[0].Complete(first);
-        await harness.WaitForProgress(1);
-        Assert.False(workflow.IsCompleted);
         Assert.Equal(2, harness.Children.Count);
+
+        harness.Children[0].Complete(outcome, "Budget is wrong");
+        await harness.WaitForProgress(1);
+
+        Assert.False(workflow.IsCompleted);
+        Assert.Equal([(harness.Children[1].Options.InstanceId, ApprovalNames.CancelEvent, (object?)outcome)],
+            harness.Cancellations);
         harness.AssertNoApply();
 
-        harness.Children[1].Complete(second);
-        await harness.WaitForChildren(3);
-        Assert.False(workflow.IsCompleted);
-        harness.AssertNoApply();
-        harness.Children[2].Complete(last);
+        harness.Children[1].Complete("Canceled");
         ApprovalChainResult result = await workflow;
 
-        Assert.Equal(expected, result.Status);
+        Assert.Equal(outcome, result.Status);
+        Assert.Equal(2, harness.Children.Count);
+        Assert.Equal(["Release"], result.StagesNotStarted);
         Assert.Null(result.Receipt);
-        Assert.Equal([first, second, last], result.Steps.Select(step => step.Status));
-        Assert.All(harness.Children, child => Assert.True(child.Completion.Task.IsCompletedSuccessfully));
-        Assert.Equal(harness.Children.Count, harness.Statuses[^1].Completed);
-        Assert.Equal(harness.Statuses[^1].Total, harness.Statuses[^1].Completed);
-        Assert.Equal(new ApprovalProgress(expected, "Release", 2, 2, 3, 3), harness.Statuses[^1]);
+        Assert.Equal([outcome, "Canceled"], result.Steps.Select(step => step.Status));
+        Assert.Equal("Budget is wrong", result.Steps[0].Comment);
+        Assert.Equal(new ApprovalProgress(outcome, "Review", 1, 2, 2, 3), harness.Statuses[^1]);
         harness.AssertNoApply();
+    }
+
+    [Fact]
+    public async Task ARejectionInTheSecondStageEndsTheChainBeforeTheThirdStageStarts()
+    {
+        ApprovalChainRequest request = Request;
+        request = request with
+        {
+            Policy = request.Policy with
+            {
+                Stages = [.. request.Policy.Stages, new("Final", 30, [new("director", "assigned-director")])]
+            }
+        };
+        Harness harness = new();
+        Task<ApprovalChainResult> workflow = harness.Start(request);
+        harness.Children[1].Complete("Approved");
+        harness.Children[0].Complete("Approved");
+        await harness.WaitForChildren(3);
+        Assert.Empty(harness.Cancellations);
+
+        harness.Children[2].Complete("Rejected", "Not acceptable");
+        ApprovalChainResult result = await workflow;
+
+        Assert.Equal("Rejected", result.Status);
+        Assert.Equal(3, harness.Children.Count);
+        Assert.Equal(["Final"], result.StagesNotStarted);
+        Assert.Empty(harness.Cancellations);
+        Assert.Equal(["Approved", "Approved", "Rejected"], result.Steps.Select(step => step.Status));
+        Assert.Equal(new ApprovalProgress("Rejected", "Release", 2, 3, 3, 4), harness.Statuses[^1]);
+        harness.AssertNoApply();
+    }
+
+    [Fact]
+    public async Task AReviewerWhoFinishedBeforeTheCancelKeepsTheirOwnOutcome()
+    {
+        Harness harness = new();
+        Task<ApprovalChainResult> workflow = harness.Start(Request);
+        harness.Children[1].Complete("Approved");
+        await harness.WaitForProgress(1);
+
+        harness.Children[0].Complete("Rejected", "No");
+        ApprovalChainResult result = await workflow;
+
+        Assert.Empty(harness.Cancellations);
+        Assert.Equal("Rejected", result.Status);
+        Assert.Equal(["Rejected", "Approved"], result.Steps.Select(step => step.Status));
+        Assert.Equal(["Release"], result.StagesNotStarted);
+    }
+
+    [Fact]
+    public async Task TheFirstEndingOutcomeDecidesTheChainStatus()
+    {
+        Harness harness = new();
+        Task<ApprovalChainResult> workflow = harness.Start(Request);
+
+        harness.Children[1].Complete("Timeout");
+        await harness.WaitForProgress(1);
+        harness.Children[0].Complete("Rejected", "Too late");
+        ApprovalChainResult result = await workflow;
+
+        Assert.Equal("Timeout", result.Status);
+        Assert.Equal(["Rejected", "Timeout"], result.Steps.Select(step => step.Status));
     }
 
     [Fact]
@@ -110,13 +170,16 @@ public sealed class ApprovalChainTests
             Assert.Equal(result.Steps[index].InstanceId, child.Options.InstanceId);
             Assert.Null(child.Options.Version);
             Assert.Equal(new ApprovalStepContext("chain-001", "client", "account", "plan-approval",
-                "policy", 7, stage, stageNumber, 2, role), child.Request.Step);
+                "policy", 7, stage, stageNumber, 2, role, "corr-001"), child.Request.Step);
             Assert.Equal(last ? 30 : 15, child.Request.TimeoutMinutes);
             Assert.Equal(request.PlanId, child.Request.PlanId);
             Assert.Equal(request.Version, child.Request.Version);
             Assert.Equal(request.Requester, child.Request.Requester);
-            Dictionary<string, string> expectedTags = ApprovalTags.Create("client", "plan-approval",
-                "sunny-soda", 3, "policy-chain", stage, "policy", 7, "chain-001");
+            Dictionary<string, string> expectedTags = ApprovalTags.Create("client", "account", "plan-approval",
+                "sunny-soda", 3, "requester", "corr-001", "policy-chain", stage, "policy", 7, "chain-001");
+            Assert.Equal("requester", expectedTags["startedBy"]);
+            Assert.Equal("corr-001", expectedTags["correlationId"]);
+            Assert.Equal("account", expectedTags["account"]);
             Assert.Equal(expectedTags.OrderBy(tag => tag.Key), child.Options.Tags!.OrderBy(tag => tag.Key));
         }
 
@@ -138,7 +201,7 @@ public sealed class ApprovalChainTests
             {
                 AccountId = null,
                 Stages = Enumerable.Range(1, 10).Select(stage => new ResolvedPolicyStage($"stage-{stage}", 1440,
-                    Enumerable.Range(1, 10).Select(role => new ResolvedRole($"role-{role}", "assigned")).ToArray()))
+                    Enumerable.Range(1, 10).Select(role => new ResolvedRole($"role-{role}", $"user-{stage}-{role}")).ToArray()))
                     .ToArray()
             }
         };
@@ -219,6 +282,7 @@ public sealed class ApprovalChainTests
     [InlineData("plan")]
     [InlineData("business-version")]
     [InlineData("requester")]
+    [InlineData("correlation")]
     [InlineData("delay-negative")]
     [InlineData("delay-large")]
     [InlineData("late-invalid-stage")]
@@ -234,6 +298,7 @@ public sealed class ApprovalChainTests
             "plan" => request with { PlanId = "bad/plan" },
             "business-version" => request with { Version = 0 },
             "requester" => request with { Requester = " " },
+            "correlation" => request with { CorrelationId = "bad id" },
             "delay-negative" => request with { ApplyDecisionDelaySeconds = -1 },
             "delay-large" => request with { ApplyDecisionDelaySeconds = 61 },
             _ => request with
@@ -283,6 +348,53 @@ public sealed class ApprovalChainTests
         harness.AssertNoApply();
     }
 
+    [Theory]
+    [InlineData("assigned-finance", "REQUESTER", "assigned-owner")]
+    [InlineData("assigned-finance", "assigned-legal", "ASSIGNED-FINANCE")]
+    public async Task SeparationOfDutiesConflictsAreRefusedBeforeAnySideEffects(
+        string finance, string legal, string owner)
+    {
+        ApprovalChainRequest request = Request;
+        request = request with
+        {
+            Policy = request.Policy with
+            {
+                Stages =
+                [
+                    new("Review", 15, [new("finance", finance), new("legal", legal)]),
+                    new("Release", 30, [new("owner", owner)])
+                ]
+            }
+        };
+        Harness harness = new();
+
+        SeparationOfDutiesException exception = await Assert.ThrowsAsync<SeparationOfDutiesException>(
+            () => harness.Start(request));
+
+        Assert.NotEmpty(exception.Message);
+        Assert.Empty(harness.Children);
+        Assert.Empty(harness.Statuses);
+        harness.AssertNoApply();
+    }
+
+    [Fact]
+    public async Task OneRolePerPersonIsNotRequiredWithinAStage()
+    {
+        ApprovalChainRequest request = Request;
+        request = request with
+        {
+            Policy = request.Policy with
+            {
+                Stages = [new("Review", 15, [new("finance", "same-person"), new("legal", "same-person")])]
+            }
+        };
+        Harness harness = new(autoComplete: true);
+
+        ApprovalChainResult result = await harness.Start(request);
+
+        Assert.Equal("Approved", result.Status);
+    }
+
     [Fact]
     public async Task OversizedParentIdIsRejectedBeforeSchedulingChildren()
     {
@@ -301,7 +413,9 @@ public sealed class ApprovalChainTests
         public SubOrchestrationOptions Options { get; } = options;
         public TaskCompletionSource<ApprovalResult> Completion { get; } = new();
 
-        public void Complete(string status) => Completion.SetResult(new(status, Request.Version));
+        public void Complete(string status, string? comment = null) => Completion.SetResult(new(
+            status, Request.Version, status is "Timeout" or "Canceled" ? null : Request.Approver,
+            new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero), comment));
     }
 
     private sealed class Harness
@@ -310,6 +424,7 @@ public sealed class ApprovalChainTests
         public Mock<TaskOrchestrationContext> Context { get; } = new(MockBehavior.Strict);
         public List<Child> Children { get; } = [];
         public List<ApprovalProgress> Statuses { get; } = [];
+        public List<(string InstanceId, string EventName, object? Payload)> Cancellations { get; } = [];
 
         public Harness(string instanceId = "chain-001", bool autoComplete = false)
         {
@@ -330,6 +445,9 @@ public sealed class ApprovalChainTests
                     Notify();
                     return child.Completion.Task;
                 });
+            Context.Setup(item => item.SendEvent(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+                .Callback<string, string, object>((instanceId, eventName, payload) =>
+                    Cancellations.Add((instanceId, eventName, payload)));
             Context.Setup(item => item.CallActivityAsync<string>(
                 nameof(ApplyDecision), It.IsAny<object?>(), It.IsAny<TaskOptions?>()))
                 .ReturnsAsync("sunny-soda:v3:approved");

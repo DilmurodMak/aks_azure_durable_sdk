@@ -56,6 +56,8 @@ spec:
               value: WorkloadIdentity
             - name: AZURE_CLIENT_ID
               value: "__AZURE_CLIENT_ID__"
+            - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+              value: "__APPINSIGHTS_CONNECTION_STRING__"
           resources:
             requests:
               cpu: 100m

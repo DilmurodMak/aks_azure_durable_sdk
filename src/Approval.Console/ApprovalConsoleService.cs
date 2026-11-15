@@ -18,7 +18,7 @@ public sealed class ApprovalConsoleService(DurableTaskClient client) : IApproval
         ArgumentException.ThrowIfNullOrWhiteSpace(decision.ActingAs);
         ArgumentException.ThrowIfNullOrWhiteSpace(decision.Outcome);
         return ClientOperations.ExecuteAsync(client,
-            new ClientCommand("decide", id, Decision: new Decision(decision.ActingAs, decision.Outcome, decision.Version)),
+            new ClientCommand("decide", id, Decision: new Decision(decision.ActingAs, decision.Outcome, decision.Version, decision.Comment)),
             cancellation);
     }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Approval.Contracts;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -25,7 +26,8 @@ public sealed class ApprovalChainService(
             ApprovalChainRequest input = metadata.ReadInputAs<ApprovalChainRequest>()
                 ?? throw new InvalidDataException("Workflow input is missing.");
             workflows.Add(new(metadata.InstanceId, input.PlanId, input.Version, metadata.RuntimeStatus.ToString(),
-                input.Policy.Version, metadata.CreatedAt, input.Policy.WorkflowCode, input.Policy.Source));
+                input.Policy.Version, metadata.CreatedAt, input.Policy.WorkflowCode, input.Policy.Source,
+                input.Requester, input.CorrelationId));
         }
         return workflows.OrderByDescending(item => item.CreatedAt).ToArray();
     }
@@ -60,8 +62,11 @@ public sealed class ApprovalChainService(
                 bool canDecide = priorStagesFinished && parent.RuntimeStatus == OrchestrationRuntimeStatus.Running &&
                     parentProgress?.StageNumber == stageIndex + 1 &&
                     child?.RuntimeStatus == OrchestrationRuntimeStatus.Running && childProgress?.State == "Waiting";
-                string state = child?.RuntimeStatus == OrchestrationRuntimeStatus.Completed
-                    ? child.ReadOutputAs<ApprovalResult>()?.Status ?? throw new InvalidDataException("Approval result is missing.")
+                ApprovalResult? outcome = child?.RuntimeStatus == OrchestrationRuntimeStatus.Completed
+                    ? child.ReadOutputAs<ApprovalResult>() ?? throw new InvalidDataException("Approval result is missing.")
+                    : null;
+                string state = outcome is not null
+                    ? outcome.Status
                     : child is not null ? child.RuntimeStatus == OrchestrationRuntimeStatus.Running
                         ? childProgress?.State ?? "Starting" : child.RuntimeStatus.ToString()
                     : parent.RuntimeStatus is not (OrchestrationRuntimeStatus.Running or OrchestrationRuntimeStatus.Pending)
@@ -74,7 +79,8 @@ public sealed class ApprovalChainService(
                 rows.Add(new(childId, id, input.PlanId, input.Version, input.Requester, reviewer.Approver,
                     reviewer.Role, input.Policy.Version, FormattableString.Invariant($"{stageIndex + 1}.{reviewerIndex + 1}"),
                     state, canDecide, child is not null, reason,
-                    childProgress ?? new(state, stage.Name, stageIndex + 1, input.Policy.Stages.Length)));
+                    childProgress ?? new(state, stage.Name, stageIndex + 1, input.Policy.Stages.Length),
+                    outcome?.DecidedBy, outcome?.DecidedAt, outcome?.Comment));
             }
             priorStagesFinished &= stageFinished;
         }
@@ -84,27 +90,35 @@ public sealed class ApprovalChainService(
     public async Task<object> StartAsync(StartChainRequest request, CancellationToken cancellation)
     {
         ApprovalPolicy.ValidateKey(request.InstanceId, "Instance ID");
+        string correlationId = request.CorrelationId ?? Guid.NewGuid().ToString("N");
+        ApprovalRules.ValidateCorrelationId(correlationId);
+        ApprovalRules.ValidatePlan(request.PlanId, request.Version, request.Requester);
+        ApprovalRules.ValidateDelay(request.ApplyDecisionDelaySeconds);
         PolicyMatch match = await policies.ResolveAsync(
             request.ClientId, request.AccountId, request.WorkflowCode, cancellation);
         Dictionary<string, string> assignments = await identities.ResolveAsync(
             request.ClientId, request.AccountId, match.Stages.SelectMany(stage => stage.Roles), cancellation);
         ResolvedApprovalPolicy policy = match.Resolve(request.ClientId, request.AccountId, role => assignments[role]);
-        ApprovalRules.ValidatePlan(request.PlanId, request.Version, request.Requester);
-        ApprovalRules.ValidateDelay(request.ApplyDecisionDelaySeconds);
+        ApprovalRules.ValidateSeparationOfDuties(request.Requester, policy.Stages);
         if (await client.GetInstanceAsync(request.InstanceId, cancellation) is not null)
             throw new InvalidOperationException("Instance already exists. Use a fresh ID.");
-        ApprovalChainRequest input = new(request.PlanId, request.Version, request.Requester, policy,
+        ApprovalChainRequest input = new(request.PlanId, request.Version, request.Requester, correlationId, policy,
             request.ApplyDecisionDelaySeconds);
+        Dictionary<string, string> tags = ApprovalTags.Create(request.ClientId, request.AccountId,
+            request.WorkflowCode, request.PlanId, request.Version, request.Requester, correlationId, "console", "chain",
+            policy.Id, policy.Version);
+        using Activity? span = ApprovalTelemetry.StartSpan("approval.start", tags,
+            ("instanceId", request.InstanceId), ("chainSource", policy.Source));
         StartOrchestrationOptions options = new StartOrchestrationOptions(request.InstanceId)
         {
-            Tags = ApprovalTags.Create(request.ClientId, request.WorkflowCode, request.PlanId,
-                request.Version, "console", "chain", policy.Id, policy.Version)
+            Tags = tags
         }.WithDedupeStatuses(Enum.GetValues<OrchestrationRuntimeStatus>());
         await client.ScheduleNewOrchestrationInstanceAsync(
             ApprovalNames.ChainOrchestration, input, options, cancellation);
         return new
         {
             instanceId = request.InstanceId,
+            correlationId,
             policyId = policy.Id,
             policyVersion = policy.Version,
             source = policy.Source,
@@ -124,6 +138,7 @@ public sealed class ApprovalChainService(
         return new
         {
             instanceId = id,
+            correlationId = input.CorrelationId,
             runtimeStatus = metadata.RuntimeStatus.ToString(),
             progress = metadata.ReadCustomStatusAs<ApprovalProgress>(),
             policyId = input.Policy.Id,

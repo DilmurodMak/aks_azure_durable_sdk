@@ -1,3 +1,4 @@
+using Approval.Contracts;
 using Grpc.Core;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
@@ -16,6 +17,7 @@ public sealed class ConsoleExceptionHandler(ILogger<ConsoleExceptionHandler> log
             KeyNotFoundException => (404, "Approval not found"),
             MissingDemoIdentityException missing => (409, $"Assign a demo user to role {missing.Role} in step 1 (Identities) before starting."),
             NoMatchingPolicyException none => (409, none.Message),
+            SeparationOfDutiesException conflict => (409, conflict.Message),
             InvalidOperationException => (409, "Approval is not in the required state or already exists"),
             RpcException { StatusCode: Grpc.Core.StatusCode.AlreadyExists } => (409, "Approval already exists"),
             RpcException { StatusCode: Grpc.Core.StatusCode.NotFound } => (404, "Approval not found"),

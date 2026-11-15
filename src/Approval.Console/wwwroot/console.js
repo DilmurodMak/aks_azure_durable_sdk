@@ -11,7 +11,14 @@ let workflowBlocks = [];
 let startedWorkflow = "";
 let refreshCounter = 0;
 const pendingDecisions = new Map();
-const FINISHED_STEP_STATES = ["Approved", "Rejected", "Timeout", "Failed", "Terminated", "Completed", "Canceled"];
+const FINISHED_STEP_STATES = ["Approved", "Rejected", "Returned", "Timeout", "Failed", "Terminated", "Completed", "Canceled", "NotStarted"];
+const DECISION_ACTIONS = [
+  { outcome: "Approve", label: "Approve", symbol: "check", className: "approve" },
+  { outcome: "Return", label: "Return for changes", symbol: "return", className: "return" },
+  { outcome: "Reject", label: "Reject", symbol: "close", className: "reject" }
+];
+const COMMENT_REQUIRED = ["Reject", "Return"];
+const draftComments = new Map();
 const FINISHED_RUN_STATES = ["Completed", "Failed", "Terminated", "Canceled"];
 const ACTIVE_RUN_STATES = ["Running", "Pending", "Suspended"];
 const MAX_WORKFLOWS_SHOWN = 6;
@@ -636,12 +643,18 @@ async function submitDecision(approval, outcome) {
     message(approval.blockedReason || "This step is not waiting for a decision.", true);
     return;
   }
+  const comment = (draftComments.get(id) || "").trim();
   const decision = {
     actingAs: element("actor").value.trim(), outcome,
-    version: Number(element("decision-version").value || approval.version)
+    version: Number(element("decision-version").value || approval.version),
+    ...(comment && { comment })
   };
   if (!decision.actingAs || !Number.isInteger(decision.version) || decision.version < 1) {
     message("Choose an Acting as user and a positive plan version.", true);
+    return;
+  }
+  if (COMMENT_REQUIRED.includes(outcome) && !comment) {
+    message(`Add a comment to explain why you ${outcome === "Reject" ? "reject" : "return"} this plan.`, true);
     return;
   }
   pendingDecisions.set(id, `Sending ${outcome}...`);
@@ -658,13 +671,15 @@ async function submitDecision(approval, outcome) {
       showResult(status);
       if (isFinished(status)) {
         pendingDecisions.delete(id);
+        draftComments.delete(id);
         await refresh();
         message(`${id}: ${status.result?.status || status.runtimeStatus}. The finished step stays visible in its workflow.`);
         return;
       }
       const received = status.history?.some(event => event.eventType === "EventRaised" && event.name === "Decision" &&
         JSON.stringify(JSON.parse(event.input || "{}")) === JSON.stringify({
-          Approver: decision.actingAs, Outcome: decision.outcome, Version: decision.version
+          Approver: decision.actingAs, Outcome: decision.outcome, Version: decision.version,
+          Comment: decision.comment ?? null
         }));
       if (invalidReason && received && status.customStatus?.state === "Waiting") {
         pendingDecisions.delete(id);
@@ -730,7 +745,8 @@ function workflowHeader(block) {
   const title = document.createElement("strong");
   title.textContent = workflow.instanceId;
   const detail = span("", [workflow.workflowCode, steps[0] && `${steps[0].planId} v${steps[0].version}`, workflow.chainSource,
-    steps[0] && `policy v${steps[0].policyVersion}`].filter(Boolean).join(" | "));
+    steps[0] && `policy v${steps[0].policyVersion}`, workflow.requester && `started by ${workflow.requester}`,
+    workflow.correlationId && `correlation ${workflow.correlationId}`].filter(Boolean).join(" | "));
   content.append(title, span(`state state-${workflow.runtimeStatus}`, workflow.runtimeStatus), detail,
     button("Pinned policy & result", "info", () => act(async () => {
       showResult(await request(`/api/workflows/${encodeURIComponent(workflow.instanceId)}`), true);
@@ -744,6 +760,28 @@ function workflowHeader(block) {
     cell.append(problem);
   }
   return row;
+}
+
+function decisionNote(approval) {
+  const when = approval.decidedAt ? new Date(approval.decidedAt).toLocaleString() : "";
+  const text = {
+    Approved: `Approved by ${approval.decidedBy} ${when}`,
+    Rejected: `Rejected by ${approval.decidedBy} ${when}`,
+    Returned: `Returned for changes by ${approval.decidedBy} ${when}`,
+    Timeout: `No decision before the deadline ${when}`,
+    Canceled: `Canceled ${when}: another reviewer ended the plan`,
+    NotStarted: "Never started: an earlier stage ended the plan"
+  }[approval.state];
+  if (!text) return null;
+  const note = document.createElement("p");
+  note.className = "decision-note";
+  note.append(document.createTextNode(text.trim()));
+  if (approval.comment) {
+    const quote = document.createElement("q");
+    quote.textContent = approval.comment;
+    note.append(document.createTextNode(" - "), quote);
+  }
+  return note;
 }
 
 function approvalRow(approval) {
@@ -764,20 +802,36 @@ function approvalRow(approval) {
   const actions = document.createElement("div");
   actions.className = "row-actions";
   const pending = pendingDecisions.get(approval.instanceId);
-  for (const outcome of ["Approve", "Reject", "View"]) {
-    if (outcome !== "View" && finishedStep) continue;
-    const action = button(outcome, outcome === "Approve" ? "check" : outcome === "Reject" ? "close" : "info", () => {
-      if (outcome !== "View") { void submitDecision(approval, outcome); return; }
-      void act(async () => {
-        await showStatus(approval.instanceId);
-        message("Approval status and history shown below.");
-      });
-    }, outcome === "View" ? "" : outcome.toLowerCase());
-    action.disabled = outcome === "View" ? !approval.canView : !!pending || !approval.canDecide;
+  const parts = [];
+  if (!finishedStep) {
+    const comment = document.createElement("input");
+    comment.type = "text";
+    comment.className = "decision-comment";
+    comment.maxLength = 1000;
+    comment.placeholder = "Comment (required to reject or return)";
+    comment.setAttribute("aria-label", `Comment for ${approval.instanceId}`);
+    comment.value = draftComments.get(approval.instanceId) || "";
+    comment.disabled = !approval.canDecide || !!pending;
+    comment.addEventListener("input", () => draftComments.set(approval.instanceId, comment.value));
+    parts.push(comment);
+  }
+  for (const { outcome, label, symbol, className } of DECISION_ACTIONS) {
+    if (finishedStep) break;
+    const action = button(label, symbol, () => void submitDecision(approval, outcome), className);
+    action.disabled = !!pending || !approval.canDecide;
     if (action.disabled && approval.blockedReason) action.title = approval.blockedReason;
     actions.append(action);
   }
-  const parts = [actions];
+  const view = button("View", "info", () => void act(async () => {
+    await showStatus(approval.instanceId);
+    message("Approval status and history shown below.");
+  }));
+  view.disabled = !approval.canView;
+  if (view.disabled && approval.blockedReason) view.title = approval.blockedReason;
+  if (approval.state !== "NotStarted") actions.append(view);
+  parts.push(actions);
+  const record = decisionNote(approval);
+  if (record) parts.push(record);
   if (pending) {
     const hint = document.createElement("p");
     hint.className = "hint decision-pending";
@@ -802,7 +856,7 @@ function refreshSummary() {
     workflows: workflowBlocks.map(({ workflow, steps, error }) => ({
       instanceId: workflow.instanceId, status: workflow.runtimeStatus, businessStep: workflow.workflowCode,
       chain: workflow.chainSource, policyVersion: workflow.policyVersion,
-      steps: steps.map(step => `${step.rank} ${step.role} (${step.approver}): ${step.state}`),
+      steps: steps.map(step => `${step.rank} ${step.role} (${step.approver}): ${step.state}${step.comment ? ` - "${step.comment}"` : ""}`),
       ...(error && { error })
     }))
   };
@@ -829,10 +883,11 @@ element("chain-start").addEventListener("submit", event => {
   act(async () => {
     const input = Object.fromEntries(new FormData(event.target));
     input.accountId = input.accountId || null; input.version = Number(input.version);
+    input.correlationId = input.correlationId?.trim() || null;
     const result = await request("/api/workflows", input);
     startedWorkflow = result.instanceId;
     showResult(result);
-    message(`Started ${result.instanceId} using ${result.source} from ${result.policyId} v${result.policyVersion}. Refresh to see its active stage.`);
+    message(`Started ${result.instanceId} using ${result.source} from ${result.policyId} v${result.policyVersion}. Correlation ID ${result.correlationId}. Refresh to see its active stage.`);
     await refresh();
     showPanel("approvals");
   });

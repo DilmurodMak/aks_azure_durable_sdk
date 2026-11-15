@@ -21,6 +21,7 @@
     <symbol id="icon-example" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol>
     <symbol id="icon-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
     <symbol id="icon-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="icon-return" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
     <symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></symbol>
   </svg>
   <div class="shell">
@@ -148,6 +149,7 @@
           <label>Plan version<input name="version" value="3" type="number" min="1" required></label>
           <label>Requester <span class="optional">who submits the plan</span><select name="requester" id="requester" required><option value="requester">requester (plan owner, not an approver)</option></select></label>
           <label>Workflow instance ID<input name="instanceId" id="chain-instance" required></label>
+          <label>Correlation ID <span class="optional">optional, generated if empty</span><input name="correlationId" maxlength="80" placeholder="Generated"></label>
           <div class="form-action"><button type="submit" class="primary"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg>Start workflow</button></div>
         </form>
         <div class="explanation"><h3>One reusable approval engine</h3>
@@ -156,13 +158,13 @@
       </section>
 
       <section id="panel-approvals" class="panel" role="tabpanel" aria-labelledby="tab-approvals" hidden>
-        <div class="section-heading"><div><h2>Step 4 - Approve or reject</h2><p>Each block is one workflow with its full approval chain. Rows in the same stage run in parallel; the next stage unlocks only after every row in the previous stage finishes.</p></div>
+        <div class="section-heading"><div><h2>Step 4 - Approve, return or reject</h2><p>Each block is one workflow with its full approval chain. Rows in the same stage run in parallel; the next stage unlocks only after every row in the previous stage approves. A rejection, return or timeout ends the plan and stops the remaining rows.</p></div>
           <button id="refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>Refresh</button></div>
         <p id="approval-plan-note" class="hint">Ranks 1.1 and 1.2 run together; 2.1 waits for all of stage 1. Every running workflow is listed, plus the most recent one so its finished steps stay visible.</p>
         <div class="review-controls">
           <label>Acting as <span class="optional">demo role assignment</span>
             <select id="actor"><option value="">Select a demo user</option></select></label>
-          <p class="hint">Wrong user, self-approval, a stale version, or a typo is refused. The original timer continues.</p>
+          <p class="hint">Wrong user, self-approval, a stale version, or a typo is refused. The original timer continues. Reject and Return need a comment.</p>
         </div>
         <details class="advanced"><summary>Test a stale decision</summary>
           <label>Plan version to send <span class="optional">leave empty to use the workflow's plan version</span><input id="decision-version" type="number" min="1" placeholder="Use plan version"></label></details>

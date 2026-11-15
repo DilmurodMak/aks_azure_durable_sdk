@@ -7,12 +7,14 @@ cd "$(dirname "$0")/.."
 : "${AZURE_CLIENT_ID:?Set AZURE_CLIENT_ID from workloadIdentityClientId.}"
 : "${ENDPOINT:?Set ENDPOINT from schedulerEndpoint.}"
 : "${TASKHUB:?Set TASKHUB from taskHubName.}"
+: "${APPLICATIONINSIGHTS_CONNECTION_STRING:?Run: source scripts/use-env.sh azure (it sets the Application Insights connection string).}"
 
 if [[ ! "$WORKER_IMAGE" =~ ^[a-z0-9.-]+\.azurecr\.io/approval-worker@sha256:[a-f0-9]{64}$ ]] ||
    [[ ! "$AZURE_CLIENT_ID" =~ ^[a-fA-F0-9-]{36}$ ]] ||
    [[ ! "$ENDPOINT" =~ ^https://[a-zA-Z0-9.-]+$ ]] ||
-   [[ ! "$TASKHUB" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  printf 'ERROR: Invalid image digest, identity, endpoint, or task hub. No changes applied.\n' >&2
+   [[ ! "$TASKHUB" =~ ^[a-zA-Z0-9_-]+$ ]] ||
+   [[ ! "$APPLICATIONINSIGHTS_CONNECTION_STRING" =~ ^InstrumentationKey=[a-fA-F0-9-]{36}\;[A-Za-z0-9=\;:/._-]+$ ]]; then
+  printf 'ERROR: Invalid image digest, identity, endpoint, task hub, or Application Insights connection string. No changes applied.\n' >&2
   exit 2
 fi
 
@@ -28,6 +30,7 @@ sed \
   -e "s|__AZURE_CLIENT_ID__|$AZURE_CLIENT_ID|g" \
   -e "s|__ENDPOINT__|$ENDPOINT|g" \
   -e "s|__TASKHUB__|$TASKHUB|g" \
+  -e "s|__APPINSIGHTS_CONNECTION_STRING__|$APPLICATIONINSIGHTS_CONNECTION_STRING|g" \
   deploy/worker.yaml > "$manifest"
 
 # A namespace must exist before server-side validation can validate its children.

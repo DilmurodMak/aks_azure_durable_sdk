@@ -24,4 +24,6 @@ type SpikeConfiguration = {
   workerServiceAccountName: string
   outboundIpAddress: string
   allowedSourceCidrs: string[]
+  applicationInsightsName: string
+  applicationInsightsResourceId: string
 }

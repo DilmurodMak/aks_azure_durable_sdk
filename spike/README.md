@@ -296,11 +296,15 @@ deduplication, automatic activation, business-step catalogue validation, default
 resolution (narrower owner first), and simulator
 identity changes without policy version changes or mutation of running snapshots.
 Roles-only policy starts were also verified against both existing local and AKS workers.
-After the policy-set change, `scripts/test-policy.sh` and `scripts/test-console.sh` were re-run
-against the local emulator and worker using throwaway policy and identity stores: sequential,
-parallel out-of-order, hot-edit isolation, wait-all rejection, timeout, a default chain applied
-to a second business step (`B08`), and an override replacing it for `B07` all passed.
-The AKS worker image was not changed: the pinned snapshot only gained an optional `source` field.
+Final green-deployment run (2026-11-14), using throwaway policy and identity stores:
+`scripts/test-policy.sh` and `scripts/test-console.sh` passed against the local emulator and worker,
+and then against Azure Scheduler and the AKS worker running image. The policy run covers
+sequential, parallel out-of-order, hot-edit isolation, wait-all rejection, timeout, a default chain
+applied to a second business step (`B08`), and an override replacing it for `B07`.
+On AKS, `scripts/test-approval.sh` (pod replacement, timeout, stale version, receipt, history order)
+and `scripts/test-inflight.sh` (final receipt activity redelivered on a replacement pod) also passed.
+The worker image was rebuilt and redeployed from the final code; the contracts have no legacy
+shapes, so run only fresh instances against it.
 
 ## Limits
 

@@ -1,10 +1,10 @@
 # Source this file: source scripts/use-env.sh local|azure
 approval_use_env() {
-  local target="${1:-}" root configuration destination tenant
+  local target="${1:-}" root configuration destination tenant insights
   root="$(git rev-parse --show-toplevel)" || return 1
   case "$target" in
     local)
-      unset AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_FEDERATED_TOKEN_FILE
+      unset AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_FEDERATED_TOKEN_FILE APPLICATIONINSIGHTS_CONNECTION_STRING APPINSIGHTS_APP_ID
       source "$root/env/local.env"
       export POLICY_STORE_PATH="$root/approval_policies/local.json"
       export DEMO_IDENTITIES_PATH="$root/demo_settings/local.json"
@@ -19,16 +19,20 @@ approval_use_env() {
         printf 'ERROR: Invalid Scheduler outputs; environment was not switched.\n' >&2
         return 1
       fi
+      insights="$(az resource show --ids "$(jq -r '.applicationInsightsResourceId' <<< "$configuration")" \
+        --query '{connection:properties.ConnectionString,appId:properties.AppId}' --output json)" || return 1
       destination="$root/env/azure.env"
       (
         umask 077
-        jq -r --arg tenant "$tenant" '
+        jq -r --arg tenant "$tenant" --argjson insights "$insights" '
           "export ENDPOINT=" + (.schedulerEndpoint|@sh),
           "export TASKHUB=" + (.taskHubName|@sh),
           "export AKS_CLUSTER_NAME=" + (.clusterName|@sh),
           "export AZURE_CLIENT_ID=" + (.workloadIdentityClientId|@sh),
           "export REGISTRY_NAME=" + (.registryName|@sh),
           "export REGISTRY_LOGIN_SERVER=" + (.registryLoginServer|@sh),
+          "export APPLICATIONINSIGHTS_CONNECTION_STRING=" + ($insights.connection|@sh),
+          "export APPINSIGHTS_APP_ID=" + ($insights.appId|@sh),
           "export SCHEDULER_AUTH=AzureCli",
           "export APPROVAL_ENVIRONMENT=AZURE",
           "export CONSOLE_PORT=5081",

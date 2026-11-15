@@ -79,7 +79,8 @@ Content-Type: application/json
   "workflowCode": "B07",
   "planId": "sunny-soda",
   "version": 3,
-  "requester": "requester"
+  "requester": "requester",
+  "correlationId": "crm-ticket-4711"
 }
 
 ### Parent workflow status and pinned policy
@@ -108,12 +109,19 @@ Content-Type: application/json
 ### Child status/history; final receipt is on the parent workflow
 GET {{base}}/api/approvals/{{approval}}?history=true
 
-### Reject (use a different waiting run)
+### Reject (use a different waiting run). Reject and Return need a comment; without one the API answers 400.
 POST {{base}}/api/approvals/{{approval}}/decision
 X-Approval-Console: spike
 Content-Type: application/json
 
-{"actingAs":"finance","outcome":"Reject","version":3}
+{"actingAs":"finance","outcome":"Reject","version":3,"comment":"Budget is wrong"}
+
+### Return for changes (use a different waiting run). The plan goes back to the requester and the chain ends.
+POST {{base}}/api/approvals/{{approval}}/decision
+X-Approval-Console: spike
+Content-Type: application/json
+
+{"actingAs":"finance","outcome":"Return","version":3,"comment":"Add the budget breakdown"}
 
 ### Not found: 404
 GET {{base}}/api/workflows/chain-does-not-exist

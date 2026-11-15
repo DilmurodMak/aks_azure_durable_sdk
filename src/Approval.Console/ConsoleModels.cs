@@ -11,12 +11,15 @@ public sealed record DecisionForm
     [Required] public required string ActingAs { get; init; }
     [Required] public required string Outcome { get; init; }
     [Range(1, int.MaxValue)] public int Version { get; init; }
+
+    /// <summary>Why: required to reject or return, recommended otherwise. At most 1000 characters.</summary>
+    public string? Comment { get; init; }
 }
 
 /// <summary>A workflow available for viewing its complete pinned approval plan.</summary>
 public sealed record WorkflowSummaryResponse(
     string InstanceId, string PlanId, int Version, string RuntimeStatus, int PolicyVersion, DateTimeOffset CreatedAt,
-    string WorkflowCode, string ChainSource);
+    string WorkflowCode, string ChainSource, string Requester, string CorrelationId);
 
 /// <summary>Which chain would apply if a workflow started now for the client, account, and business step.</summary>
 public sealed record PolicyMatchResponse(
@@ -26,7 +29,7 @@ public sealed record PolicyMatchResponse(
 public sealed record WorkflowApprovalResponse(
     string InstanceId, string ParentInstanceId, string PlanId, int Version, string Requester, string Approver,
     string Role, int PolicyVersion, string Rank, string State, bool CanDecide, bool CanView,
-    string? BlockedReason, ApprovalProgress Progress);
+    string? BlockedReason, ApprovalProgress Progress, string? DecidedBy, DateTimeOffset? DecidedAt, string? Comment);
 
 /// <summary>Identifies the actual backend selected when this process started.</summary>
 public sealed record ConsoleEnvironmentResponse(
@@ -76,6 +79,9 @@ public sealed record StartChainRequest
     [Range(1, int.MaxValue)] public int Version { get; init; }
     [Required] public required string Requester { get; init; }
     [Range(0, 60)] public int ApplyDecisionDelaySeconds { get; init; }
+
+    /// <summary>Ties this plan's dashboard entries, traces and logs together. Generated when omitted.</summary>
+    public string? CorrelationId { get; init; }
 }
 
 /// <summary>Simulator settings, separate from policy configuration. Replaces one client/account's demo role assignments.</summary>

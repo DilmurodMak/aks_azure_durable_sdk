@@ -10,10 +10,11 @@ public sealed record ClientCommand(
     bool IncludeHistory = false)
 {
     public const string Usage = """
-        decide --instance ID --approver ID --version N --outcome Approve|Reject
+        decide --instance ID --approver ID --version N --outcome Approve|Reject|Return [--comment TEXT]
         status --instance ID [--history]
         Start all workflows through POST /api/workflows or the Local Console UI using a saved policy.
-        Only exact Approve or Reject completes. Invalid decisions are refused and the workflow keeps waiting.
+        Only exact Approve, Reject or Return completes. Reject and Return need a --comment.
+        Invalid decisions are refused and the workflow keeps waiting.
         """;
 
     public static ClientCommand Parse(string[] args)
@@ -51,7 +52,7 @@ public sealed record ClientCommand(
 
         string[] allowed = args[0] switch
         {
-            "decide" => ["--instance", "--approver", "--version", "--outcome"],
+            "decide" => ["--instance", "--approver", "--version", "--outcome", "--comment"],
             _ => ["--instance", "--history"]
         };
         foreach (string key in values.Keys)
@@ -82,7 +83,8 @@ public sealed record ClientCommand(
 
         string approver = Required(values, "--approver");
         return new ClientCommand("decide", instanceId,
-            Decision: new Decision(approver, Required(values, "--outcome"), version));
+            Decision: new Decision(approver, Required(values, "--outcome"), version,
+                values.GetValueOrDefault("--comment")));
     }
 
     private static string Required(Dictionary<string, string> values, string option)

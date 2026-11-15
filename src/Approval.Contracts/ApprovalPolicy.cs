@@ -90,12 +90,18 @@ public sealed record ResolvedApprovalPolicy(
     string Id, string ClientId, string? AccountId, string WorkflowCode, int Version, ResolvedPolicyStage[] Stages,
     string Source);
 
+/// <summary>
+/// The business input of one chain. <paramref name="CorrelationId"/> ties the dashboard, traces and logs
+/// of this plan together; the requester is who started it.
+/// </summary>
 public sealed record ApprovalChainRequest(
-    string PlanId, int Version, string Requester, ResolvedApprovalPolicy Policy, int ApplyDecisionDelaySeconds = 0);
+    string PlanId, int Version, string Requester, string CorrelationId, ResolvedApprovalPolicy Policy,
+    int ApplyDecisionDelaySeconds = 0);
 
 public sealed record ApprovalStepContext(
     string ParentInstanceId, string ClientId, string? AccountId, string WorkflowCode,
-    string PolicyId, int PolicyVersion, string Stage, int StageNumber, int StageCount, string Role);
+    string PolicyId, int PolicyVersion, string Stage, int StageNumber, int StageCount, string Role,
+    string CorrelationId);
 
 public sealed record ApprovalProgress(
     string State, string Stage, int StageNumber, int StageCount, int Completed = 0, int Total = 1)
@@ -104,17 +110,23 @@ public sealed record ApprovalProgress(
 }
 
 public sealed record ApprovalStepResult(
-    string InstanceId, string Stage, string Role, string Approver, string Status);
+    string InstanceId, string Stage, string Role, string Approver, string Status,
+    string? DecidedBy = null, DateTimeOffset? DecidedAt = null, string? Comment = null);
 
+/// <summary>
+/// The chain's outcome. Steps lists every reviewer step that started; stages after a rejection, return, or
+/// timeout never start and are named in <paramref name="StagesNotStarted"/>.
+/// </summary>
 public sealed record ApprovalChainResult(
     string Status, int Version, string PolicyId, int PolicyVersion,
-    ApprovalStepResult[] Steps, string? Receipt);
+    ApprovalStepResult[] Steps, string[] StagesNotStarted, string? Receipt);
 
 public static class ApprovalTags
 {
     public static Dictionary<string, string> Create(
-        string client, string workflow, string plan, int version, string source,
-        string stage, string? policyId = null, int? policyVersion = null, string? parent = null)
+        string client, string? account, string workflow, string plan, int version, string startedBy,
+        string correlationId, string source, string stage, string? policyId = null, int? policyVersion = null,
+        string? parent = null)
     {
         Dictionary<string, string> tags = new()
         {
@@ -123,12 +135,48 @@ public static class ApprovalTags
             ["workflow"] = workflow,
             ["plan"] = plan,
             ["version"] = version.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["startedBy"] = startedBy,
+            ["correlationId"] = correlationId,
             ["source"] = source,
             ["stage"] = stage
         };
+        if (account is not null) tags["account"] = account;
         if (policyId is not null) tags["policy"] = policyId;
         if (policyVersion is not null) tags["policyVersion"] = policyVersion.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (parent is not null) tags["parent"] = parent;
         return tags;
+    }
+}
+
+/// <summary>
+/// Spans for the approval-specific steps. The Durable Task SDK emits its own orchestration and activity spans
+/// from the "Microsoft.DurableTask" source; these add the business tags (client, account, who started it,
+/// correlation ID) to the same trace.
+/// </summary>
+public static class ApprovalTelemetry
+{
+    public const string SourceName = "Approval.Spike";
+    private static readonly System.Diagnostics.ActivitySource Source = new(SourceName);
+
+    public static System.Diagnostics.Activity? StartSpan(
+        string name, IReadOnlyDictionary<string, string> tags, params (string Key, string Value)[] extra)
+    {
+        // ASP.NET Core wraps each request in an unrecorded "propagation-only" activity. A parent-based sampler
+        // would drop every child of it, and the worker would inherit "not sampled" through the trace context.
+        // Start a fresh recorded trace instead of hanging this span under an unrecorded parent.
+        if (System.Diagnostics.Activity.Current is { Recorded: false })
+        {
+            System.Diagnostics.Activity.Current = null;
+        }
+
+        System.Diagnostics.Activity? span = Source.StartActivity(name);
+        if (span is null) return null;
+        foreach ((string key, string value) in tags)
+        {
+            if (key != "durabletask.displayName") span.SetTag($"approval.{key}", value);
+        }
+
+        foreach ((string key, string value) in extra) span.SetTag($"approval.{key}", value);
+        return span;
     }
 }
