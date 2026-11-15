@@ -17,11 +17,17 @@ ms.topic: how-to
 
 The [step workflow](Approval.Worker/ApprovalStep.cs) records submission, waits on a
 `Decision` event or one durable timer, and validates actor, outcome, and plan
-version. Invalid decisions keep waiting; valid rejection or timeout has no
-receipt. Reviewers never apply the business update independently.
+version, and requires a comment to reject or return. Invalid decisions keep waiting; a
+valid rejection, return or timeout has no receipt. It also listens for a `Cancel` event from
+its parent. `RecordDecision` then records who decided, what, when and why. Reviewers never
+apply the business update independently.
 The [chain workflow](Approval.Worker/ApprovalChain.cs) runs policy stages in order
-and role approvals within each stage in parallel. It waits for every outcome
-and calls `ApplyDecision` once only when all required approvals approve.
+and role approvals within each stage in parallel. The first rejection, return or timeout ends the
+plan: it cancels the reviewers still waiting in that stage and never starts later stages.
+It calls `ApplyDecision` once only when every approval approved. The console and the worker
+refuse a plan whose requester holds a required role or whose reviewer appears in two stages, and
+both export OpenTelemetry traces (the SDK's `Microsoft.DurableTask` source plus
+`Approval.Spike`) to Application Insights when a connection string is set.
 These are not two competing approval engines: the parent coordinates the saved
 chain, and the child provides the reusable decision/timer behavior. Single-step
 and multi-step policies use the same parent/child pattern.

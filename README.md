@@ -15,7 +15,9 @@ coordinates saved policies; `ApprovalStep` handles each approval step.
 The test request is "Sunny Soda, plan version 3." We check:
 
 * Approval after replacing the worker pod
-* Explicit rejection and no-response timeout, with no approval receipt
+* Explicit rejection (with a comment), return for changes, and no-response timeout: each ends
+  the chain with no approval receipt
+* One correlation ID and an Application Insights trace across the console and worker
 * Refusal of the wrong approver, self-approval, and stale plan versions
 * In-flight activity redelivery, demonstrating why business updates need deduplication
 * Editing saved policies while existing runs keep their original chain and new runs pick up the edit

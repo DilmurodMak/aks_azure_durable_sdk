@@ -17,6 +17,7 @@ SDK spike. This is not a Functions-runtime deployment.
 | Network            | Dedicated VNet/subnet, NAT gateway and static outbound IPv4 address                               |
 | Scheduler          | Durable Task Scheduler Consumption SKU and a `default` task hub                                   |
 | Worker identity    | User-assigned managed identity, federated to the SDK worker service account                       |
+| Monitoring         | Log Analytics workspace and a workspace-based Application Insights resource for OpenTelemetry traces |
 | Operator access    | AKS RBAC Cluster Admin on this cluster; Durable Task Data Contributor on this task hub            |
 
 Scheduler and the AKS API server accept only the supplied client IPv4 addresses
@@ -38,7 +39,7 @@ authenticated endpoint; it does not have a private endpoint or IP firewall here.
 * [main.bicepparam](./main.bicepparam): inputs read from your shell environment
 * [stack.bicep](./stack.bicep): identity, module wiring, and workload federation
 * [types.bicep](./types.bicep): shared parameter and output contracts
-* [modules/](./modules): network, AKS, registry, and Scheduler resources
+* [modules/](./modules): network, AKS, registry, Scheduler, and monitoring resources
 * [LICENSE](./LICENSE): Microsoft sample's MIT notice
 
 Adapted from Microsoft's [AKS getting-started guide][quickstart] and
