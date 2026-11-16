@@ -1,7 +1,7 @@
 ---
-title: Durable approval spike on AKS
-description: Validate one durable approval locally with an emulator and in Azure with an AKS worker.
-ms.date: 2026-11-13
+title: Durable Task and Temporal approval spikes
+description: Compare approval workflow architectures, technology trade-offs and recorded Durable Task and Temporal spike results.
+ms.date: 2026-11-16
 ms.topic: overview
 ---
 
@@ -11,6 +11,9 @@ Prove that a standalone .NET Durable Task SDK worker can wait for a human
 decision, survive worker replacement, and resume the **same approval instance**.
 This uses the .NET SDK, not the Azure Functions runtime. `ApprovalChain`
 coordinates saved policies; `ApprovalStep` handles each approval step.
+
+A separate [Python Temporal spike](temporal/README.md) implements the same
+approval pattern with self-hosted Temporal and PostgreSQL.
 
 The test request is "Sunny Soda, plan version 3." We check:
 
@@ -25,6 +28,9 @@ The test request is "Sunny Soda, plan version 3." We check:
 
 ## What runs where
 
+The following locations describe the Durable baseline. The Temporal spike has
+separate local services, shown in its architecture below.
+
 | Location                    | Components                                                                                                                  |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Azure, provisioned by Bicep | AKS with two fixed nodes, ACR, VNet/NAT egress, managed identities/RBAC, and Durable Task Scheduler with task hub `default` |
@@ -32,13 +38,90 @@ The test request is "Sunny Soda, plan version 3." We check:
 | Local machine               | Local Console UI/HTTP endpoints and optional CLI                                                                            |
 | Local Docker Desktop        | Scheduler emulator and its dashboard, using task hub `approval-local`                                                       |
 
-```text
-Local: HTTP file/buttons -> Local Console UI -> emulator       <-> local worker
-Cloud: HTTP file/buttons -> Local Console UI -> Azure Scheduler <-> AKS worker
-```
+## Architecture
+
+Both drawings preserve the supplied E8 architecture and its numbered difference
+badges. Each shows the deployment boundaries and the code path from client to
+approval chain, reviewer step and side-effect activities.
+
+### Durable Task SDK on AKS with managed Scheduler
+
+![Durable Task architecture: local console and emulator, AKS approval worker, managed Azure Scheduler, identity and telemetry](architecture/E8-Durable-Task-AKS-Architecture.svg)
+
+[Full-size drawing](architecture/E8-Durable-Task-AKS-Architecture.svg) |
+[Editable draw.io source](architecture/E8-Durable-Task-AKS-Architecture.drawio)
 
 Only the worker is deployed to AKS. The Local Console UI always runs locally.
 Scheduler stores workflow state; the worker executes orchestrators and activities.
+The dashed policy and audit stores are future application components, not
+Scheduler persistence that we must provision.
+
+### Self-hosted Temporal with an AKS target
+
+![Temporal architecture: local Docker Compose spike and target AKS server, Python worker and Web UI with external PostgreSQL](architecture/E8-Temporal-AKS-Architecture.svg)
+
+[Full-size drawing](architecture/E8-Temporal-AKS-Architecture.svg) |
+[Editable draw.io source](architecture/E8-Temporal-AKS-Architecture.drawio)
+
+The left side shows the recorded Docker Compose deployment: FastAPI console,
+Python worker, Temporal Server, PostgreSQL and Temporal Web UI. The right side
+shows the target AKS topology, with execution and visibility databases in Azure
+Database for PostgreSQL Flexible Server outside the cluster. We still own
+Temporal configuration, schema migrations, database sizing, access and recovery
+qualification. PostgreSQL supports the spike's Visibility searches without
+requiring Elasticsearch or OpenSearch.
+
+## Key differences between Durable Task and Temporal
+
+The first five rows correspond to the numbered badges in both drawings.
+Platform capabilities are distinct from features enabled in these spikes.
+
+| Area                        | Durable Task SDK + Azure Scheduler                                                                                           | Self-hosted Temporal                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Engine and state         | Microsoft operates Scheduler, durable history, timers and dispatch; we run application workers                               | We operate Temporal and provide execution and visibility databases                                                                                 |
+| 2. Sending decisions        | External events; acknowledgement does not mean the decision has been applied                                                 | Signals in this spike have the same asynchronous acknowledgement; Updates can validate and return a processed result, but are not implemented here |
+| 3. Operations and search    | Managed dashboard with immutable start-tag filters; the pinned SDK query lacks tag filtering, so the console scans instances | We host the Web UI; mutable typed Search Attributes support combined, paginated Visibility queries                                                 |
+| 4. AKS failure boundary     | Workers stop during a cluster outage; Scheduler and its state are outside AKS                                                | In the target topology, server, UI and workers stop with AKS; external PostgreSQL has a separate availability boundary                             |
+| 5. Identity and access      | Entra ID, task-hub Azure RBAC and AKS Workload Identity                                                                      | We configure TLS/mTLS, authorization and Web UI sign-in; production identity is not set up in the local spike                                      |
+| Language in this repository | C# with the standalone .NET SDK, not Durable Functions                                                                       | Python SDK; Temporal .NET is also an option                                                                                                        |
+| Workflow code upgrades      | Context-based versioning and worker matching are supported, but not configured or qualified here                             | Patching and Worker Deployment Versioning are supported, but in-flight code upgrades are not qualified here                                        |
+| Testing and replay          | Mocked orchestration tests and recorded AKS acceptance checks                                                                | Real-server tests and replay of Approved, Rejected and Returned histories recorded locally                                                         |
+| Observability               | OpenTelemetry traces to Application Insights, demonstrated in Azure                                                          | SDK and business traces to Jaeger locally; production server/database metrics and alerts remain to be configured                                   |
+| History and business audit  | Service/SKU retention limits apply; a separate business audit store is needed                                                | Namespace retention is configurable; a separate business audit store is still needed                                                               |
+| Cost and portability        | Scheduler charges plus worker infrastructure; this backend is Azure-hosted                                                   | MIT-licensed engine, but server, database and operations are not free; self-hosting is portable beyond Azure                                       |
+
+Both engines support sequential and parallel approvals, durable waits and policy
+snapshots. A business workflow designer, governed draft/test/publish lifecycle,
+approver inbox, notifications, immutable audit store and duplicate-safe business
+writes remain application responsibilities. Activating a new policy for future
+runs is not the same as migrating an active workflow or safely changing its code.
+
+See the [detailed platform comparison](DURABLE-SDK-VS-TEMPORAL.md) for evidence,
+SDK-specific constraints and remaining qualifications.
+
+## Overall technology comparison
+
+The broader options below summarize the supplied E8 assessment dated
+16 November 2026. Only Durable Task and Temporal have implementations in this
+repository. Scores are the assessment's weighted fit scores, not benchmarks
+or independently validated production-readiness ratings.
+
+| Criterion               | Durable Task + Scheduler                    | Temporal, self-hosted                                     | Dapr Workflow                                          | Camunda 8                                                 | Logic Apps Standard             | Power Automate                                                |
+| ----------------------- | ------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------- |
+| Authoring model         | Code-first SDK                              | Code-first workflows                                      | Code-first workflow building block                     | BPMN processes                                            | Low-code workflows              | Low-code flows                                                |
+| Runtime ownership       | Azure operates Scheduler; we run workers    | We run server, workers and persistence                    | We run Dapr and its state store                        | We run cluster, secondary storage and identity components | Azure-hosted plan               | Microsoft-hosted Power Platform                               |
+| Identity integration    | Managed identity and Azure RBAC             | mTLS and authorization plugins; Entra integration is ours | Application identity and mTLS; operator access is ours | OIDC sign-in, roles and tenants                           | Managed identity and Azure RBAC | Connection identity varies; some connectors need user sign-in |
+| Operations UI           | Scheduler dashboard and tag filters         | Web UI and business-key Visibility filters                | Local development dashboard; production tooling needed | Operate and Tasklist                                      | Portal run history              | Automation Center                                             |
+| Workflow change support | Orchestration versions and worker matching  | Patching, Worker Deployment Versioning and replay         | Patching and named versions                            | Process versions and instance migration                   | Low-code workflow updates       | Low-code flow updates                                         |
+| Business decision audit | Build the E8 audit store                    | Build the E8 audit store                                  | Build the E8 audit store                               | Built-in audit log; validate E8 decision coverage         | Build the E8 audit store        | Flow-edit auditing is not an E8 decision audit                |
+| Portability             | SDK portable; selected backend Azure-only   | Self-host on supported cloud/Kubernetes infrastructure    | Self-host on supported cloud/Kubernetes infrastructure | Self-hosting subject to vendor licensing                  | Azure-only                      | Power Platform only                                           |
+| Commercial model        | Service charges, no per-user engine licence | MIT engine plus infrastructure and operations             | Apache 2.0 plus infrastructure and operations          | Enterprise licence for production                         | Plan-based charges              | User/flow licensing                                           |
+| Assessment fit score    | 4.03                                        | 4.09                                                      | 3.90                                                   | 3.81                                                      | 3.12                            | 2.63                                                          |
+
+The Durable/Temporal scores differ by only 0.06. The practical trade-off is managed
+backend operations versus Temporal's richer workflow interaction, search and
+replay tooling. The other platforms are assessment options, not tested substitutes
+for either spike. No engine supplies the complete E8 business application.
 
 ## Start here
 
