@@ -65,7 +65,7 @@ Scheduler persistence that we must provision.
 
 The left side shows the recorded Docker Compose deployment: FastAPI console,
 Python worker, Temporal Server, PostgreSQL and Temporal Web UI. The right side
-shows the target AKS topology, with execution and visibility databases in Azure
+shows the AKS topology, now deployed with execution and visibility databases in Azure
 Database for PostgreSQL Flexible Server outside the cluster. We still own
 Temporal configuration, schema migrations, database sizing, access and recovery
 qualification. PostgreSQL supports the spike's Visibility searches without
@@ -83,10 +83,10 @@ Platform capabilities are distinct from features enabled in these spikes.
 | 3. Operations and search    | Managed dashboard with immutable start-tag filters; the pinned SDK query lacks tag filtering, so the console scans instances | We host the Web UI; mutable typed Search Attributes support combined, paginated Visibility queries                                                 |
 | 4. AKS failure boundary     | Workers stop during a cluster outage; Scheduler and its state are outside AKS                                                | In the target topology, server, UI and workers stop with AKS; external PostgreSQL has a separate availability boundary                             |
 | 5. Identity and access      | Entra ID, task-hub Azure RBAC and AKS Workload Identity                                                                      | We configure TLS/mTLS, authorization and Web UI sign-in; production identity is not set up in the local spike                                      |
-| Language in this repository | C# with the standalone .NET SDK, not Durable Functions                                                                       | Python SDK; Temporal .NET is also an option                                                                                                        |
+| Supported languages         | C#/.NET, Python and Java; JavaScript/TypeScript (preview); Go (beta)                                                          | C#/.NET, Go, Java, PHP, Python, Ruby, Rust and TypeScript/JavaScript                                                                                 |
 | Workflow code upgrades      | Context-based versioning and worker matching are supported, but not configured or qualified here                             | Patching and Worker Deployment Versioning are supported, but in-flight code upgrades are not qualified here                                        |
 | Testing and replay          | Mocked orchestration tests and recorded AKS acceptance checks                                                                | Real-server tests and replay of Approved, Rejected and Returned histories recorded locally                                                         |
-| Observability               | OpenTelemetry traces to Application Insights, demonstrated in Azure                                                          | SDK and business traces to Jaeger locally; production server/database metrics and alerts remain to be configured                                   |
+| Observability               | OpenTelemetry traces to Application Insights, demonstrated in Azure                                                          | Structured logs and Temporal history; optional OTLP tracing; Jaeger removed and no trace exporter currently configured                               |
 | History and business audit  | Service/SKU retention limits apply; a separate business audit store is needed                                                | Namespace retention is configurable; a separate business audit store is still needed                                                               |
 | Cost and portability        | Scheduler charges plus worker infrastructure; this backend is Azure-hosted                                                   | MIT-licensed engine, but server, database and operations are not free; self-hosting is portable beyond Azure                                       |
 
@@ -99,30 +99,6 @@ runs is not the same as migrating an active workflow or safely changing its code
 See the [detailed platform comparison](DURABLE-SDK-VS-TEMPORAL.md) for evidence,
 SDK-specific constraints and remaining qualifications.
 
-## Overall technology comparison
-
-The broader options below summarize the supplied E8 assessment dated
-16 November 2026. Only Durable Task and Temporal have implementations in this
-repository. Scores are the assessment's weighted fit scores, not benchmarks
-or independently validated production-readiness ratings.
-
-| Criterion               | Durable Task + Scheduler                    | Temporal, self-hosted                                     | Dapr Workflow                                          | Camunda 8                                                 | Logic Apps Standard             | Power Automate                                                |
-| ----------------------- | ------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------- |
-| Authoring model         | Code-first SDK                              | Code-first workflows                                      | Code-first workflow building block                     | BPMN processes                                            | Low-code workflows              | Low-code flows                                                |
-| Runtime ownership       | Azure operates Scheduler; we run workers    | We run server, workers and persistence                    | We run Dapr and its state store                        | We run cluster, secondary storage and identity components | Azure-hosted plan               | Microsoft-hosted Power Platform                               |
-| Identity integration    | Managed identity and Azure RBAC             | mTLS and authorization plugins; Entra integration is ours | Application identity and mTLS; operator access is ours | OIDC sign-in, roles and tenants                           | Managed identity and Azure RBAC | Connection identity varies; some connectors need user sign-in |
-| Operations UI           | Scheduler dashboard and tag filters         | Web UI and business-key Visibility filters                | Local development dashboard; production tooling needed | Operate and Tasklist                                      | Portal run history              | Automation Center                                             |
-| Workflow change support | Orchestration versions and worker matching  | Patching, Worker Deployment Versioning and replay         | Patching and named versions                            | Process versions and instance migration                   | Low-code workflow updates       | Low-code flow updates                                         |
-| Business decision audit | Build the E8 audit store                    | Build the E8 audit store                                  | Build the E8 audit store                               | Built-in audit log; validate E8 decision coverage         | Build the E8 audit store        | Flow-edit auditing is not an E8 decision audit                |
-| Portability             | SDK portable; selected backend Azure-only   | Self-host on supported cloud/Kubernetes infrastructure    | Self-host on supported cloud/Kubernetes infrastructure | Self-hosting subject to vendor licensing                  | Azure-only                      | Power Platform only                                           |
-| Commercial model        | Service charges, no per-user engine licence | MIT engine plus infrastructure and operations             | Apache 2.0 plus infrastructure and operations          | Enterprise licence for production                         | Plan-based charges              | User/flow licensing                                           |
-| Assessment fit score    | 4.03                                        | 4.09                                                      | 3.90                                                   | 3.81                                                      | 3.12                            | 2.63                                                          |
-
-The Durable/Temporal scores differ by only 0.06. The practical trade-off is managed
-backend operations versus Temporal's richer workflow interaction, search and
-replay tooling. The other platforms are assessment options, not tested substitutes
-for either spike. No engine supplies the complete E8 business application.
-
 ## Start here
 
 | Guide                                             | Use it for                                                                              |
@@ -132,7 +108,7 @@ for either spike. No engine supplies the complete E8 business application.
 | [Azure infrastructure](infra/README.md)           | Bicep provisioning, access configuration, costs, and cleanup                            |
 | [HTTP requests](approvals.http)                   | Start an approval, send a decision, and inspect its status/history                      |
 | [Saved policies](approval_policies/README.md)     | Local policy storage, automatic activation, and version selection                       |
-| [Temporal approval spike](temporal/README.md)     | Self-hosted Temporal and PostgreSQL on Docker Desktop, approval parity and verification |
+| [Temporal approval spike](temporal/README.md)     | Docker Desktop and AKS deployment with managed PostgreSQL, private UI access and verification |
 | [Platform comparison](DURABLE-SDK-VS-TEMPORAL.md) | Architecture, authoring, search, versioning and recorded comparison findings            |
 
 ## Demo pages
@@ -145,11 +121,13 @@ for either spike. No engine supplies the complete E8 business application.
 | The console's **Open Scheduler dashboard** link in Azure mode | Microsoft's Azure dashboard, using your Entra sign-in              |
 | <http://127.0.0.1:5090>                                       | Separate Temporal approval console                                 |
 | <http://127.0.0.1:8088>                                       | Self-hosted Temporal Web UI                                        |
-| <http://127.0.0.1:16686>                                      | Local Temporal traces in Jaeger                                    |
+| <http://127.0.0.1:5091>                                       | AKS Temporal approval console through loopback port-forward        |
+| <http://127.0.0.1:8089>                                       | AKS Temporal Web UI through loopback port-forward                   |
 
 These URLs work after starting the services in the [demo guide](spike/README.md).
 The local dashboard does **not** show Azure runs.
 Temporal URLs require the separate [Temporal startup](temporal/README.md#start-or-stop).
+AKS URLs require the [private access tunnels](temporal/README.md#access-the-aks-console-and-temporal-ui).
 
 ## Boundaries
 

@@ -1,6 +1,6 @@
 ---
 title: Self-hosted Temporal approval spike
-description: Run the Python approval chain with a real Temporal Server, PostgreSQL, browser console and traces on Docker Desktop.
+description: Run the Python approval chain on Docker Desktop or AKS with PostgreSQL and private browser access.
 ms.date: 2026-11-16
 ms.topic: how-to
 ---
@@ -8,14 +8,14 @@ ms.topic: how-to
 ## What is running
 
 This is the approval-parity implementation, not a workflow designer or a
-production Temporal deployment. It does not change the Durable worker, AKS or
-the existing policy and identity stores.
+production Temporal deployment. It does not change the Durable worker or its
+policy and identity stores. The AKS deployment uses a separate `temporal-spike`
+namespace and managed Azure PostgreSQL.
 
 | Component        | Local address or purpose                         |
 | ---------------- | ------------------------------------------------ |
 | Approval console | <http://127.0.0.1:5090>                          |
 | Temporal Web UI  | <http://127.0.0.1:8088>                          |
-| Jaeger traces    | <http://127.0.0.1:16686>                         |
 | Temporal gRPC    | `127.0.0.1:7233`                                 |
 | PostgreSQL       | Private Compose network; named persistent volume |
 | Python worker    | One container, 0.5 CPU and 512 MiB limit         |
@@ -23,7 +23,7 @@ the existing policy and identity stores.
 Temporal Server 1.32.2 runs its services in one container against PostgreSQL
 16.11, with separate execution and visibility databases. This is not
 `temporal server start-dev`. The application uses Python 3.13 and Temporal SDK
-1.36.1. The browser console, worker, engine, database, Temporal UI and Jaeger
+1.36.1. The browser console, worker, engine, database and Temporal UI
 are separate services in the `temporal-approval-spike` Compose project.
 
 ## Start or stop
@@ -57,7 +57,89 @@ docker compose stop
 
 `docker compose down` also retains the named PostgreSQL volume and local policy
 files. Do not remove the volume unless intentionally discarding this spike's
-workflow histories. Jaeger uses memory storage and loses traces when restarted.
+workflow histories.
+
+## Access the AKS console and Temporal UI
+
+The AKS services are private `ClusterIP` services. They have no public
+LoadBalancer or ingress. On the workstation with approved AKS access, open:
+
+* Approval console: <http://127.0.0.1:5091>
+* Temporal Web UI: <http://127.0.0.1:8089>
+
+If the tunnels are not running, open two terminals in the repository root.
+Keep each terminal open:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+source env/azure.env
+bash temporal/scripts/access-aks.sh console
+```
+
+In the second terminal:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+source env/azure.env
+bash temporal/scripts/access-aks.sh ui
+```
+
+These are loopback addresses on the machine running `kubectl`, not public
+Azure URLs. Do not start a duplicate forward when the port is already in use.
+A port-forward is attached to a pod; rerun it if that pod is replaced.
+
+The Temporal UI deployment disables Kubernetes service-link environment
+injection. Without that setting, Kubernetes creates `TEMPORAL_UI_PORT` as a
+`tcp://...` URL and the UI crashes because it expects a numeric port.
+
+Keep the simulator private: Acting as is not authentication. A stable shared
+URL would require HTTPS and authenticated, authorized ingress. Do not expose
+the current console or raw Temporal management APIs anonymously.
+
+## Deploy Temporal with managed Azure PostgreSQL
+
+The separate [Temporal Bicep](../infra/temporal.bicep) creates PostgreSQL 16
+Flexible Server, execution and visibility databases, private endpoints/DNS,
+a purge-protected Key Vault and a setup workload identity. It does not redeploy
+the existing Durable stack.
+
+The approved spike database is Central US `Standard_B2s` (2 vCPU/4 GiB),
+32 GiB storage, seven-day backups and no HA. This subscription restricts
+PostgreSQL provisioning in East US 2, East US and West US 2, so the existing
+East US 2 AKS cluster connects across regions through Private Link.
+Public database and Key Vault access are disabled.
+
+From the repository root:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+source env/azure.env
+bash temporal/scripts/provision-azure.sh --preview
+# Review the what-if before applying:
+bash temporal/scripts/provision-azure.sh --apply
+bash temporal/scripts/build-azure.sh
+bash temporal/scripts/deploy-aks.sh
+```
+
+The image build stages locked AMD64 dependencies, smoke-tests the image locally,
+then builds in ACR and records the immutable digest under ignored
+`temporal/.build/azure-image.txt`.
+
+A one-shot AKS Workload Identity job reads credentials over private Key Vault
+and can patch only two named Kubernetes secrets. The bootstrap job verifies
+database certificates/hostname, creates the non-administrator `temporal_app`
+role and preinstalls `btree_gin`. Azure requires that extension to be allowlisted;
+Bicep sets `azure.extensions` accordingly. The administrator Kubernetes secret
+is deleted after bootstrap. Runtime pods receive only the application credential.
+
+Schema setup and Temporal connections require certificate-verified TLS;
+bootstrap confirmed TLS 1.3. The console uses its own 1 GiB persistent disk,
+not the local Docker policy store. Namespace quotas and network policies isolate
+the spike, and the server metrics endpoint remains private.
+
+This remains a non-HA topology: one all-services Temporal Server pod and one
+approval worker. Managed database backups do not mean restore or regional
+failover has been tested. Cross-region latency must be included in any benchmark.
 
 ## Use the approval console
 
@@ -145,11 +227,13 @@ ID. The recording activity is not an immutable external audit store. Activities
 can run more than once, and `ApplyDecision` is still a non-idempotent stand-in.
 Activity retries are bounded at three attempts; a delayed apply heartbeats.
 
-Jaeger receives SDK interceptor and business spans from the console and worker.
-Search service `temporal-approval-worker` with tag `approval.correlationId`.
-This uses the documented tracing interceptor, not the experimental
-duration-preserving plugin. Workflow-side interceptor span durations should not
-be treated as engine latency measurements.
+Jaeger has been removed from the local and AKS deployments. Use the Temporal
+UI for execution history and structured worker/server logs for diagnostics.
+OpenTelemetry instrumentation remains available: set `OTEL_EXPORTER_OTLP_ENDPOINT`
+only when an approved OTLP-compatible exporter destination is configured.
+Without that setting, spans are not exported. The documented tracing interceptor
+is used, not the experimental duration-preserving plugin; its workflow-side span
+durations should not be treated as engine latency measurements.
 
 ## Verify
 
@@ -163,6 +247,15 @@ TEMPORAL_TEST=1 uv run pytest -q
 uv run python scripts/acceptance.py --restart --burst 100
 ```
 
+For AKS, with the console port-forward running and the approved environment
+selected:
+
+```bash
+source ../env/azure.env
+uv run python scripts/acceptance.py --target aks \
+  --base http://127.0.0.1:5091 --restart --burst 5
+```
+
 The integration tests use unique task queues and temporary file stores, so they
 do not modify user-created policies. The acceptance script creates its own
 client scope and keeps evidence under ignored `.build/evidence/`.
@@ -172,7 +265,7 @@ Recorded on 2026-11-16:
 
 | Check                                                   | Result                                                                                           |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Unit, API and real-server workflow tests                | 29 passed                                                                                        |
+| Unit, API and real-server workflow tests                | 30 passed after the AKS environment-link test was added                                           |
 | Completed history replay                                | Approved, Rejected and Returned parent histories replayed                                        |
 | Policy edit during a wait                               | Original keeps v1; new start uses v2; unchanged save does not version                            |
 | Worker and Temporal Server container restarts mid-wait  | Same approval completed afterward                                                                |
@@ -180,7 +273,7 @@ Recorded on 2026-11-16:
 | Per-step override and Return                            | Passed                                                                                           |
 | Indexed combined search and pagination                  | Passed                                                                                           |
 | Browser decision flow                                   | Missing-comment warning, rejection record, sibling Canceled and future stage NotStarted verified |
-| Trace correlation                                       | One trace includes console and worker services and business correlation tags                     |
+| Historical trace verification                          | Console/worker correlation passed before Jaeger was removed; trace export is no longer configured |
 | Local 100-chain burst                                   | 100 Approved, 0 failures, 300 decisions, 400 logical executions                                  |
 | Script-observed times                                   | 18.70 s total; p50 17.64 s, p95 18.37 s, max 18.69 s                                             |
 
@@ -198,12 +291,12 @@ is not an engine performance ranking.
 
 ## Limits and next qualifications
 
-* All interfaces are loopback-only simulation tools, not authenticated production
-  APIs. The local Temporal server has no production identity/authorization setup.
-* Single PostgreSQL and Temporal Server containers are not HA. Container restart
-  recovery is not a database backup/restore or regional disaster-recovery test.
-* Jaeger is ephemeral; production telemetry retention and server/database metrics
-  scraping/alerts remain to be configured.
+* Browser access is loopback-only; AKS services are namespace-isolated, but
+  application-level user authentication/authorization is not implemented.
+* The local database container and the AKS B2s database are not HA. Container/pod
+  restart recovery is not a database restore or regional disaster-recovery test.
+* Trace export is not configured after removing Jaeger. Production telemetry
+  retention and server/database metrics scraping/alerts remain to be configured.
 * Business policy versioning is implemented. Worker Deployment Versioning,
   safe incompatible code upgrades and live policy migration are not tested.
 * No notifications, delegation, threshold rules, draft publishing, real human

@@ -63,14 +63,6 @@ services:
       - "127.0.0.1:8088:8080"
     mem_limit: 256m
 
-  jaeger:
-    image: jaegertracing/all-in-one:1.62.0
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-    ports:
-      - "127.0.0.1:16686:16686"
-    mem_limit: 256m
-
   worker:
     build: .
     image: temporal-approval-worker:local
@@ -81,7 +73,6 @@ services:
     environment:
       TEMPORAL_ADDRESS: server:7233
       TEMPORAL_NAMESPACE: approval
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     cpus: 0.5
     mem_limit: 512m
     init: true
@@ -98,7 +89,6 @@ services:
       TEMPORAL_ADDRESS: server:7233
       TEMPORAL_NAMESPACE: approval
       APPROVAL_DATA_DIR: /data
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     volumes:
       - ./.data:/data
     ports:

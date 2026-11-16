@@ -63,6 +63,17 @@ async def configure(http, stages=None):
     assert response.status_code == 200, response.text
 
 
+async def test_environment_reports_deployment_specific_links(http, monkeypatch):
+    monkeypatch.setenv("APPROVAL_DEPLOYMENT", "AKS")
+    monkeypatch.setenv("TEMPORAL_UI_URL", "http://127.0.0.1:8089")
+    response = await http.get("/api/environment")
+    assert response.status_code == 200
+    assert response.json() == {
+        "deployment": "AKS",
+        "temporalUiUrl": "http://127.0.0.1:8089",
+    }
+
+
 async def start(http, **changes):
     return await http.post(
         "/api/workflows",

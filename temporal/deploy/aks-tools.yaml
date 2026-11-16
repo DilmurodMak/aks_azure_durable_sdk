@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: temporal-spike
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: temporal-ui}
+  template:
+    metadata:
+      labels: {app: temporal-ui}
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ui
+          image: temporalio/ui:2.58.1
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-server:7233"}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /, port: http}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: temporal-spike
+spec:
+  selector: {app: temporal-ui}
+  ports: [{name: http, port: 8080, targetPort: http}]

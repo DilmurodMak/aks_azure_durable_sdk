@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-schema
+  namespace: temporal-spike
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: schema
+          image: temporalio/admin-tools:1.32.2
+          command: ["/bin/sh", "/setup/schema-azure.sh"]
+          envFrom:
+            - configMapRef: {name: temporal-config}
+          env:
+            - name: SQL_PASSWORD
+              valueFrom: {secretKeyRef: {name: temporal-db, key: POSTGRES_PWD}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: setup, mountPath: /setup, readOnly: true}
+      volumes:
+        - name: setup
+          configMap: {name: temporal-setup}

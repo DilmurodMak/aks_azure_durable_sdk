@@ -8,14 +8,14 @@ if [ ! -f .env ]; then
 fi
 mkdir -p .data
 chmod 700 .data
-docker compose up --wait postgres server ui jaeger
+docker compose up --wait postgres server ui
 uv run python -m approval.setup
 bash scripts/build.sh
 docker compose up --detach worker
 docker compose up --detach console
 for attempt in $(seq 1 60); do
   if curl --fail --silent http://127.0.0.1:5090/api/health >/dev/null; then
-    printf 'Approval console: http://127.0.0.1:5090\nTemporal UI: http://127.0.0.1:8088\nTraces: http://127.0.0.1:16686\n'
+    printf 'Approval console: http://127.0.0.1:5090\nTemporal UI: http://127.0.0.1:8088\n'
     exit 0
   fi
   sleep 2

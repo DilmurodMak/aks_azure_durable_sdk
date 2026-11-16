@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-server
+  namespace: temporal-spike
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: temporal-server}
+  template:
+    metadata:
+      labels: {app: temporal-server}
+    spec:
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: server
+          image: temporalio/server:1.32.2
+          envFrom:
+            - configMapRef: {name: temporal-config}
+            - secretRef: {name: temporal-db}
+          ports:
+            - {name: grpc, containerPort: 7233}
+            - {name: metrics, containerPort: 9090}
+          startupProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: grpc}
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: {cpu: 300m, memory: 512Mi}
+            limits: {cpu: "2", memory: 1536Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: dynamic
+              mountPath: /etc/temporal/config/dynamicconfig
+              readOnly: true
+      volumes:
+        - name: dynamic
+          configMap:
+            name: temporal-setup
+            items:
+              - {key: dynamic.yaml, path: docker.yaml}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-server
+  namespace: temporal-spike
+spec:
+  selector: {app: temporal-server}
+  ports:
+    - {name: grpc, port: 7233, targetPort: grpc}
+    - {name: metrics, port: 9090, targetPort: metrics}

@@ -6,6 +6,8 @@
 !.build/requirements.txt
 !.build/site/
 !.build/site/**
+!.build/site-amd64/
+!.build/site-amd64/**
 !approval/
 !approval/*.py
 !static/

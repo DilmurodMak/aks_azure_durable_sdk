@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-db-bootstrap
+  namespace: temporal-spike
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 240
+  template:
+    metadata:
+      labels:
+        app: temporal-db-bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: trust-roots
+          image: temporalio/admin-tools:1.32.2
+          command: ["/bin/sh", "-c", "cp /etc/ssl/certs/ca-certificates.crt /certs/roots.pem"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: certs, mountPath: /certs}
+      containers:
+        - name: bootstrap
+          image: postgres:16.11
+          command: ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-f", "/setup/bootstrap.sql"]
+          env:
+            - name: PGHOST
+              valueFrom: {configMapKeyRef: {name: temporal-config, key: POSTGRES_SEEDS}}
+            - {name: PGUSER, value: temporal_admin}
+            - {name: PGDATABASE, value: postgres}
+            - {name: PGSSLMODE, value: verify-full}
+            - {name: PGSSLROOTCERT, value: /certs/roots.pem}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: temporal-db-bootstrap, key: password}}
+            - name: APPLICATION_PASSWORD
+              valueFrom: {secretKeyRef: {name: temporal-db, key: POSTGRES_PWD}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          volumeMounts:
+            - {name: setup, mountPath: /setup, readOnly: true}
+            - {name: certs, mountPath: /certs, readOnly: true}
+      volumes:
+        - name: certs
+          emptyDir: {}
+        - name: setup
+          configMap: {name: temporal-setup}

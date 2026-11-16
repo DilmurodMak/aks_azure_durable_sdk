@@ -31,13 +31,14 @@ not whether sequential and parallel approvals are possible.
   pinned .NET SDK; Temporal has a more expressive, typed Visibility query model.
 
 The separate [Python Temporal spike](./temporal/README.md) is now implemented
-and tested on Docker Desktop with persistent PostgreSQL. The deployment target
-was changed from AKS to local Docker during implementation; no Temporal
-resources were deployed to AKS. Keep the current Durable implementation unchanged
-as the baseline. Same-AKS deployment remains a future comparison option.
+and tested on Docker Desktop with persistent PostgreSQL. It is also deployed
+in a separate namespace on the existing AKS cluster, backed by managed Azure
+PostgreSQL in Central US through a private endpoint. East US 2 database
+provisioning is restricted for this subscription. Keep the existing Durable
+implementation unchanged as the baseline.
 
 > [!IMPORTANT]
-> Temporal is implemented locally, not on AKS.
+> Temporal is deployed locally and on AKS; its managed database is cross-region.
 > The recorded local results below are distinct from documented, untested capabilities.
 > No conclusion about which platform is faster, cheaper or more reliable is justified yet.
 
@@ -55,9 +56,9 @@ Implemented local comparison:
     -> self-hosted SQL-backed Temporal Server in Docker
     -> PostgreSQL execution and visibility databases on a persistent volume
 
-Future deployment option, not performed:
+Deployed Azure topology:
   Python worker + self-hosted Temporal Service on the SAME AKS cluster
-    -> explicitly sized and qualified persistence
+    -> private endpoint to managed PostgreSQL B2s in Central US
 ```
 
 Temporal Cloud is not the target. Its hosted control plane, access management,
@@ -711,8 +712,10 @@ and search scenario as an additional track, not as the whole E8 product.
 
 The initial approval-parity track is implemented under
 [temporal/](./temporal/README.md) on Docker Desktop. The AKS topology and resource
-qualification above remain proposals. No AKS deployment occurred, and the
-business-library/draft/publish track remains unimplemented.
+qualification above is now partly implemented: the same AKS cluster hosts
+Temporal with private managed PostgreSQL and loopback-forwarded UIs. Production
+HA, recovery qualification and the business-library/draft/publish track remain
+unimplemented. See the [deployment guide](./temporal/README.md#deploy-temporal-with-managed-azure-postgresql).
 
 ## Tests and findings to record after implementation
 
@@ -798,7 +801,7 @@ must not replace Signals in only one timed baseline.
 | Safe code rollout           | SDK capability documented; not exercised                    | Documented tools; not exercised                                                       |
 | Business template lifecycle | Partial policy editor; no clone/draft/test/publish flow     | Policy editor/version activation; no governed authoring lifecycle                     |
 | Custom execution search     | Dashboard documented; pinned SDK query lacks tag predicates | Typed attributes, combined filters and pagination tested locally                      |
-| Logs and traces             | Application Insights integration tested                     | JSON logs; correlated console/worker trace in local Jaeger                            |
+| Logs and traces             | Application Insights integration tested                     | JSON logs and history; historical local trace test passed; Jaeger now removed, export not configured |
 | Enterprise security/audit   | Still incomplete                                            | Still requires design and implementation                                              |
 | Operating cost/effort       | Managed backend; no complete TCO study                      | Additional responsibilities; not measured                                             |
 
@@ -833,9 +836,11 @@ timeout before receiving the cancel Signal. The parent now handles the specific
 closed-execution signal failure and preserves the sibling's own result. This is
 an application-level concurrency consideration, not a Temporal durability failure.
 
-No AKS deployment, production identity, immutable business audit, database
-restore, controlled comparative benchmark or safe worker-code upgrade has been
-qualified by the local result.
+The later AKS deployment does not turn the local result into a controlled
+comparative benchmark. Production identity, immutable business audit, database
+restore and safe worker-code upgrades remain unqualified. Jaeger was removed
+from both deployments at the user's request; trace instrumentation remains
+available but there is currently no configured trace exporter.
 
 ## Decision after the spike
 

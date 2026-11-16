@@ -1,0 +1,125 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-namespace
+  namespace: temporal-spike
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: setup
+          image: "__TEMPORAL_IMAGE__"
+          command: ["python", "-m", "approval.setup"]
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-server:7233"}
+            - {name: TEMPORAL_NAMESPACE, value: approval}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: temporal-spike
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: temporal-worker}
+  template:
+    metadata:
+      labels: {app: temporal-worker}
+    spec:
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: worker
+          image: "__TEMPORAL_IMAGE__"
+          command: ["python", "-m", "approval.worker"]
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-server:7233"}
+            - {name: TEMPORAL_NAMESPACE, value: approval}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-console
+  namespace: temporal-spike
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: temporal-console}
+  template:
+    metadata:
+      labels: {app: temporal-console}
+    spec:
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: console
+          image: "__TEMPORAL_IMAGE__"
+          command: ["python", "-m", "uvicorn", "approval.api:app", "--host", "0.0.0.0", "--port", "5090"]
+          env:
+            - {name: TEMPORAL_ADDRESS, value: "temporal-server:7233"}
+            - {name: TEMPORAL_NAMESPACE, value: approval}
+            - {name: APPROVAL_DATA_DIR, value: /data}
+            - {name: APPROVAL_DEPLOYMENT, value: AKS}
+            - {name: TEMPORAL_UI_URL, value: "http://127.0.0.1:8089"}
+          ports: [{name: http, containerPort: 5090}]
+          startupProbe:
+            tcpSocket: {port: http}
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket: {port: http}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: console-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-console
+  namespace: temporal-spike
+spec:
+  selector: {app: temporal-console}
+  ports: [{name: http, port: 5090, targetPort: http}]

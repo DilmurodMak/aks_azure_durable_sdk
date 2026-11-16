@@ -110,6 +110,14 @@ async def health(request: Request):
     return {"ready": result, "engine": "Temporal", "namespace": client(request).namespace}
 
 
+@app.get("/api/environment")
+async def environment():
+    return {
+        "deployment": os.getenv("APPROVAL_DEPLOYMENT", "Docker Desktop"),
+        "temporalUiUrl": os.getenv("TEMPORAL_UI_URL", "http://127.0.0.1:8088"),
+    }
+
+
 @app.get("/api/policies")
 async def policies(request: Request):
     return store(request).policies()

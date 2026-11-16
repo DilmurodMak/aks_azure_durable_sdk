@@ -1,13 +1,15 @@
-"""Exercise the running local Docker stack through its public console API."""
+"""Exercise Docker or loopback-forwarded AKS through the public console API."""
 
 import argparse
 import asyncio
 import json
 import math
+import os
 import statistics
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -15,31 +17,54 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 
 
-async def docker(*args: str) -> None:
+async def command(*args: str) -> None:
     process = await asyncio.create_subprocess_exec(
-        "docker",
-        "compose",
         *args,
         cwd=ROOT,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await asyncio.wait_for(process.communicate(), 180)
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 300)
     if process.returncode:
-        raise RuntimeError(f"Docker operation failed: {stderr.decode()}")
+        raise RuntimeError(f"Restart operation failed: {stderr.decode()}")
     print(stdout.decode().strip())
 
 
-async def run(burst_count: int, restart: bool) -> None:
+async def restart_component(target: str, component: str) -> None:
+    if target == "docker":
+        await command("docker", "compose", "restart", component)
+        return
+    expected = os.environ["AKS_CLUSTER_NAME"]
+    process = await asyncio.create_subprocess_exec(
+        "kubectl", "config", "current-context", stdout=asyncio.subprocess.PIPE
+    )
+    stdout, _ = await process.communicate()
+    if process.returncode or stdout.decode().strip() != expected:
+        raise RuntimeError("Current context does not match the approved AKS cluster.")
+    prefix = ("kubectl", "--context", expected, "--namespace", "temporal-spike")
+    await command(*prefix, "rollout", "restart", f"deployment/temporal-{component}")
+    await command(
+        *prefix, "rollout", "status", f"deployment/temporal-{component}", "--timeout=240s"
+    )
+
+
+async def run(burst_count: int, restart: bool, target: str, base: str) -> None:
+    parsed = urlparse(base)
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1":
+        raise ValueError("Acceptance endpoint must use HTTP on 127.0.0.1.")
     prefix = f"acceptance-{datetime.now(UTC):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
     evidence = Path(".build/evidence") / prefix
     evidence.mkdir(parents=True)
     async with httpx.AsyncClient(
-        base_url="http://127.0.0.1:5090",
+        base_url=base,
         timeout=60,
         limits=httpx.Limits(max_connections=150, max_keepalive_connections=100),
         headers={"X-Approval-Console": "spike"},
     ) as http:
+        environment = await http.get("/api/environment")
+        environment.raise_for_status()
+        if (environment.json()["deployment"] == "AKS") != (target == "aks"):
+            raise RuntimeError("Console deployment does not match the selected test target.")
 
         async def get(path: str):
             response = await http.get(path)
@@ -148,9 +173,9 @@ async def run(burst_count: int, restart: bool) -> None:
         rows = await waiting(a, 1)
         assert next(row for row in rows if row["canDecide"])["approver"] == "finance"
         if restart:
-            await docker("restart", "worker")
+            await restart_component(target, "worker")
             await waiting(a, 1)
-            await docker("restart", "server")
+            await restart_component(target, "server")
             for _ in range(90):
                 response = await http.get("/api/health")
                 if response.status_code == 200 and response.json()["ready"]:
@@ -159,7 +184,7 @@ async def run(burst_count: int, restart: bool) -> None:
             else:
                 raise AssertionError("Server did not become healthy after restart")
             await waiting(a, 1)
-            print("PASS worker and SQL-backed server restart mid-wait")
+            print(f"PASS {target} worker and SQL-backed server restart mid-wait")
         await decide(a, 1, 1, "finance")
         await waiting(a, 1, 2)
         await decide(a, 2, 1, "lead", "Reject", "Budget requires changes")
@@ -223,38 +248,21 @@ async def run(burst_count: int, restart: bool) -> None:
                 "p50Seconds": round(statistics.median(times), 2),
                 "p95Seconds": round(times[math.ceil(len(times) * 0.95) - 1], 2),
                 "maxSeconds": round(max(times), 2),
-                "note": "Local Docker, async HTTP harness, 0.5s polling; not directly comparable with AKS curl benchmark.",
+                "note": f"{target}, async HTTP harness, 0.5s polling; not directly comparable with the Durable curl benchmark.",
             }
             print(json.dumps(burst, indent=2))
-        async with httpx.AsyncClient(base_url="http://127.0.0.1:16686", timeout=15) as traces:
-            for _ in range(30):
-                response = await traces.get(
-                    "/api/traces",
-                    params={
-                        "service": "temporal-approval-worker",
-                        "tags": json.dumps({"approval.correlationId": a}),
-                        "lookback": "1h",
-                    },
-                )
-                response.raise_for_status()
-                spans = response.json()
-                if spans["data"]:
-                    break
-                await asyncio.sleep(1)
-            else:
-                raise AssertionError("Worker business span not found in Jaeger")
-            (evidence / "traces.json").write_text(json.dumps(spans, indent=2))
         summary = {
             "completedAt": datetime.now(UTC).isoformat(),
             "prefix": prefix,
             "engine": "Temporal 1.32.2",
-            "deployment": "Docker Desktop, PostgreSQL, one Python worker limited to 0.5 CPU / 512 MiB",
+            "deployment": environment.json()["deployment"],
+            "target": target,
+            "base": base,
             "policyIsolation": "Pass",
             "workerAndServerRestart": "Pass" if restart else "Not run",
             "rejectionSkipsLaterStages": "Pass",
             "commentsAndReturn": "Pass",
             "indexedSearch": "Pass",
-            "workerBusinessTrace": "Pass",
             "burst": burst,
         }
         (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
@@ -266,5 +274,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--burst", type=int, default=0, choices=range(0, 101))
     parser.add_argument("--restart", action="store_true")
+    parser.add_argument("--target", choices=["docker", "aks"], default="docker")
+    parser.add_argument("--base", default="http://127.0.0.1:5090")
     args = parser.parse_args()
-    asyncio.run(run(args.burst, args.restart))
+    asyncio.run(run(args.burst, args.restart, args.target, args.base))

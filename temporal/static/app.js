@@ -155,8 +155,10 @@ $("start-form").addEventListener("submit", e => { e.preventDefault(); act(async 
 $("search-form").addEventListener("submit", e => { e.preventDefault(); act(async () => { await refresh(); message("Indexed search refreshed."); }); });
 $("next-page").addEventListener("click", () => act(() => refresh(true)));
 act(async () => {
+  const environment = await request("/api/environment");
+  $("temporal-ui").href = environment.temporalUiUrl;
   await request("/api/health"); await loadPolicies(); setPolicy(null);
   for (const step of await request("/api/business-steps")) $("step-picker").add(new Option(`${step.code} | ${step.name}`, step.code));
   $("step-picker").value = "B07"; $("instance-id").value = `temporal-${Date.now()}`;
-  message("Ready. Set up identities, save a policy, then start an approval.");
+  message(`${environment.deployment}: ready. Set up identities, save a policy, then start an approval.`);
 });

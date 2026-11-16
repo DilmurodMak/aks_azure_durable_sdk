@@ -60,6 +60,13 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
           }
         }
       }
+      {
+        name: 'private-endpoints'
+        properties: {
+          addressPrefix: '10.0.8.0/27'
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
     ]
   }
 }

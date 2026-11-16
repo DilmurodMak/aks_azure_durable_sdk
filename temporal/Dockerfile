@@ -1,6 +1,7 @@
 FROM python:3.13-slim AS build
 WORKDIR /app
-COPY .build/site/ /site/
+ARG DEPENDENCY_DIRECTORY=.build/site
+COPY ${DEPENDENCY_DIRECTORY}/ /site/
 COPY approval/ ./approval/
 COPY static/ ./static/
 

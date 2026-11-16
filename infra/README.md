@@ -40,6 +40,8 @@ authenticated endpoint; it does not have a private endpoint or IP firewall here.
 * [stack.bicep](./stack.bicep): identity, module wiring, and workload federation
 * [types.bicep](./types.bicep): shared parameter and output contracts
 * [modules/](./modules): network, AKS, registry, Scheduler, and monitoring resources
+* [temporal.bicep](./temporal.bicep): separate Temporal PostgreSQL, private endpoints,
+  DNS, Key Vault and setup identity deployment
 * [LICENSE](./LICENSE): Microsoft sample's MIT notice
 
 Adapted from Microsoft's [AKS getting-started guide][quickstart] and
@@ -56,6 +58,13 @@ Intentional differences from the sample:
 * Keep node counts fixed; no node or worker autoscaling is configured.
 
 ## Prerequisites
+
+For the separate Temporal deployment and its approved Central US managed
+PostgreSQL database, follow the
+[Temporal deployment instructions](../temporal/README.md#deploy-temporal-with-managed-azure-postgresql).
+Its deployment scripts preview and apply only Temporal resources, not the
+existing Durable stack. The database is a billable B2s/32 GiB, non-HA spike
+configuration; Private Link, Key Vault and storage also incur charges.
 
 Use an approved non-production subscription, with permission to create resource
 groups, resources, and role assignments. For example, Owner or the appropriate
