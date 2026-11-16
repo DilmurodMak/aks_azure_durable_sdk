@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Temporal approval spike</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+<header>
+  <div><p class="eyebrow">SELF-HOSTED TEMPORAL / POSTGRESQL</p><h1>Approval &amp; sign-off</h1>
+    <p>One reusable chain. Sequential stages, parallel reviewers, pinned policy versions.</p></div>
+  <nav aria-label="Operator tools"><a href="http://127.0.0.1:8088" target="_blank" rel="noreferrer">Temporal UI</a>
+    <a href="http://127.0.0.1:16686" target="_blank" rel="noreferrer">Traces</a><a href="/docs">API</a></nav>
+</header>
+<aside>Simulation only. Demo actors are not authenticated identities. No notifications are sent.
+  Keep all ports local. Policy save activates a new version for future starts only.</aside>
+<nav class="tabs" aria-label="Approval setup">
+  <button data-panel="identities" class="selected">1. Identities</button>
+  <button data-panel="policies">2. Policies</button>
+  <button data-panel="start">3. Start workflow</button>
+  <button data-panel="approvals">4. Approvals &amp; search</button>
+</nav>
+<p id="message" role="status">Connecting...</p>
+<main>
+  <section id="identities">
+    <h2>Who holds each role?</h2>
+    <p>These are simulator settings, separate from policy rules. Account assignments override client assignments.</p>
+    <form id="identity-form">
+      <div class="grid"><label>Client ID<input name="clientId" value="sunny" required></label>
+        <label>Account (optional)<input name="accountId"></label></div>
+      <label>Role to demo user assignments (JSON)<textarea name="assignments" rows="8" spellcheck="false">{
+  "Finance": "finance",
+  "Legal": "legal",
+  "Lead": "lead",
+  "Owner": "owner"
+}</textarea></label>
+      <button class="primary">Save identities</button>
+    </form>
+  </section>
+  <section id="policies" hidden>
+    <h2>Versioned approval policies</h2>
+    <p>Roles only, not people. Save activates an immutable version; running chains keep their original snapshot.</p>
+    <div class="toolbar"><label>Saved version<select id="policy-picker"><option value="">New policy</option></select></label>
+      <button id="new-policy">New policy</button><button id="edit-policy" disabled>Edit</button>
+      <button id="activate">Activate selected</button></div>
+    <form id="policy-form">
+      <label>Policy set (JSON)<textarea id="policy-json" rows="19" spellcheck="false"></textarea></label>
+      <button class="primary" id="save-policy">Save &amp; activate</button>
+    </form>
+    <p>Stages run in order; roles inside one stage run in parallel. A business-step override replaces the entire default chain for that step.
+      Resolution is account, client, then agency-default; an account default beats a client override.</p>
+  </section>
+  <section id="start" hidden>
+    <h2>Start a business approval</h2>
+    <p>The active chain and demo people are resolved and pinned here. Self-review and people in two stages are refused before scheduling.</p>
+    <form id="start-form" class="grid">
+      <label>Client ID<input name="clientId" value="sunny" required></label>
+      <label>Account (optional)<input name="accountId"></label>
+      <label>Business step<select name="workflowCode" id="step-picker"></select></label>
+      <label>Business plan<input name="planId" value="sunny-soda" required></label>
+      <label>Plan version<input name="version" type="number" min="1" value="3" required></label>
+      <label>Requester<input name="requester" value="requester" required></label>
+      <label>Instance ID<input name="instanceId" id="instance-id" required></label>
+      <label>Correlation ID (optional)<input name="correlationId"></label>
+      <div><button class="primary">Start workflow</button></div>
+    </form>
+  </section>
+  <section id="approvals" hidden>
+    <h2>Approvals &amp; indexed search</h2>
+    <p>Filters run on Temporal's Visibility store, not an all-inputs scan. Results can lag; refresh to reconcile.</p>
+    <form id="search-form" class="grid">
+      <label>Client ID<input name="client_id" placeholder="All clients"></label>
+      <label>Account<input name="account_id" placeholder="All accounts"></label>
+      <label>Business step<input name="workflow_code" placeholder="For example B07"></label>
+      <label>Approval state<select name="state"><option value="">All states</option>
+        <option>Waiting</option><option>Approved</option><option>Rejected</option>
+        <option>Returned</option><option>Timeout</option></select></label>
+      <label>Policy version<input name="policy_version" type="number" min="1"></label>
+      <div class="toolbar"><button class="primary">Search / refresh</button><button id="next-page" type="button" disabled>Next page</button></div>
+    </form>
+    <div id="runs"></div>
+    <section class="result"><h3>Latest result</h3><pre id="result">Start a workflow or refresh approvals.</pre></section>
+  </section>
+</main>
+</body>
+</html>

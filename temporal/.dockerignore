@@ -1,0 +1,12 @@
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!.build/
+!.build/requirements.txt
+!.build/site/
+!.build/site/**
+!approval/
+!approval/*.py
+!static/
+!static/*

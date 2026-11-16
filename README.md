@@ -42,13 +42,15 @@ Scheduler stores workflow state; the worker executes orchestrators and activitie
 
 ## Start here
 
-| Guide                                   | Use it for                                                                            |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Demo and tests](spike/README.md)       | Local emulator demo, local-to-Azure demo, HTTP requests, dashboards, and pass checks  |
-| [Source code](src/README.md)            | Project map, build/test commands, HTTP/CLI interfaces, and worker image deployment    |
-| [Azure infrastructure](infra/README.md) | Bicep provisioning, access configuration, costs, and cleanup                          |
-| [HTTP requests](approvals.http)         | Start an approval, send a decision, and inspect its status/history                    |
-| [Saved policies](approval_policies/README.md) | Local policy storage, automatic activation, and version selection |
+| Guide                                             | Use it for                                                                              |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Demo and tests](spike/README.md)                 | Local emulator demo, local-to-Azure demo, HTTP requests, dashboards, and pass checks    |
+| [Source code](src/README.md)                      | Project map, build/test commands, HTTP/CLI interfaces, and worker image deployment      |
+| [Azure infrastructure](infra/README.md)           | Bicep provisioning, access configuration, costs, and cleanup                            |
+| [HTTP requests](approvals.http)                   | Start an approval, send a decision, and inspect its status/history                      |
+| [Saved policies](approval_policies/README.md)     | Local policy storage, automatic activation, and version selection                       |
+| [Temporal approval spike](temporal/README.md)     | Self-hosted Temporal and PostgreSQL on Docker Desktop, approval parity and verification |
+| [Platform comparison](DURABLE-SDK-VS-TEMPORAL.md) | Architecture, authoring, search, versioning and recorded comparison findings            |
 
 ## Demo pages
 
@@ -58,9 +60,13 @@ Scheduler stores workflow state; the worker executes orchestrators and activitie
 | <http://localhost:8082>                                       | Microsoft's local Scheduler dashboard                              |
 | <http://localhost:5081>                                       | Local Console UI connected to Azure Scheduler and the AKS worker   |
 | The console's **Open Scheduler dashboard** link in Azure mode | Microsoft's Azure dashboard, using your Entra sign-in              |
+| <http://127.0.0.1:5090>                                       | Separate Temporal approval console                                 |
+| <http://127.0.0.1:8088>                                       | Self-hosted Temporal Web UI                                        |
+| <http://127.0.0.1:16686>                                      | Local Temporal traces in Jaeger                                    |
 
 These URLs work after starting the services in the [demo guide](spike/README.md).
 The local dashboard does **not** show Azure runs.
+Temporal URLs require the separate [Temporal startup](temporal/README.md#start-or-stop).
 
 ## Boundaries
 

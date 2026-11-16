@@ -1,0 +1,110 @@
+name: temporal-approval-spike
+services:
+  postgres:
+    image: postgres:16.11
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run bash scripts/start.sh first}
+      POSTGRES_DB: temporal
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/visibility.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    mem_limit: 512m
+
+  schema:
+    image: temporalio/admin-tools:1.32.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SQL_PASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: ["/bin/sh", "/setup.sh"]
+    volumes:
+      - ./deploy/schema.sh:/setup.sh:ro
+
+  server:
+    image: temporalio/server:1.32.2
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+      NUM_HISTORY_SHARDS: "128"
+      LOG_LEVEL: info
+    volumes:
+      - ./deploy/dynamic.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
+    ports:
+      - "127.0.0.1:7233:7233"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    mem_limit: 1g
+
+  ui:
+    image: temporalio/ui:2.58.1
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: server:7233
+    ports:
+      - "127.0.0.1:8088:8080"
+    mem_limit: 256m
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"
+    mem_limit: 256m
+
+  worker:
+    build: .
+    image: temporal-approval-worker:local
+    command: ["python", "-m", "approval.worker"]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: server:7233
+      TEMPORAL_NAMESPACE: approval
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    cpus: 0.5
+    mem_limit: 512m
+    init: true
+    stop_grace_period: 15s
+    restart: on-failure:3
+
+  console:
+    image: temporal-approval-worker:local
+    command: ["python", "-m", "uvicorn", "approval.api:app", "--host", "0.0.0.0", "--port", "5090"]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: server:7233
+      TEMPORAL_NAMESPACE: approval
+      APPROVAL_DATA_DIR: /data
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    volumes:
+      - ./.data:/data
+    ports:
+      - "127.0.0.1:5090:5090"
+    mem_limit: 512m
+    init: true
+
+volumes:
+  postgres-data:
