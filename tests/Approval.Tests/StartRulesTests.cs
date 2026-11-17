@@ -19,6 +19,48 @@ public sealed class StartRulesTests : IDisposable
 {
     private readonly string directory = Path.Combine(Path.GetTempPath(), $"start-rules-test-{Guid.NewGuid():N}");
 
+    [Fact]
+    public async Task BudgetRoutingHappensBeforeIdentityAndSeparationOfDutiesChecks()
+    {
+        (ApprovalChainService service, Mock<DurableTaskClient> client) = await Setup();
+        await new PolicyStore(Path.Combine(directory, "policies.json")).SaveAsync(new()
+        {
+            Id = "policy",
+            ClientId = "client",
+            AccountId = "account",
+            BaseVersion = 1,
+            DefaultStages = [new("Internal", ["Owner"]), new("Finance", ["Finance"], BudgetGreaterThan: 10000)]
+        }, default);
+        await new DemoIdentityStore(Path.Combine(directory, "identities.json")).SaveAsync(new()
+        {
+            ClientId = "client",
+            AccountId = "account",
+            Assignments = new() { ["Owner"] = "owner" }
+        }, default);
+        var starts = Capture(client);
+        await service.StartAsync(Request() with { BudgetAmount = 7500 }, default);
+        ApprovalChainRequest input = Assert.Single(starts).Item1;
+        Assert.Equal(["Internal"], input.Policy.Stages.Select(stage => stage.Name));
+        Assert.Equal(7500, input.Routing.BudgetAmount);
+        Assert.False(input.Routing.Stages[1].Included);
+        await Assert.ThrowsAsync<MissingDemoIdentityException>(() =>
+            service.StartAsync(Request() with { InstanceId = "above", BudgetAmount = 10000.01m }, default));
+    }
+
+    [Fact]
+    public async Task MissingOrInvalidBudgetDoesNotResolvePoliciesOrScheduleAWorkflow()
+    {
+        Mock<DurableTaskClient> client = new("test");
+        Mock<IPolicyStore> policies = new(MockBehavior.Strict);
+        ApprovalChainService service = new(client.Object, policies.Object, Mock.Of<IDemoIdentityStore>());
+        foreach (decimal? budget in new decimal?[] { null, -1, 0.001m, 1000000000000m })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.StartAsync(Request() with { BudgetAmount = budget }, default));
+        policies.VerifyNoOtherCalls();
+        client.Verify(item => item.ScheduleNewOrchestrationInstanceAsync(
+            It.IsAny<TaskName>(), It.IsAny<object?>(), It.IsAny<StartOrchestrationOptions?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [InlineData("assigned-finance", "REQUESTER", "assigned-owner")]
     [InlineData("requester", "assigned-legal", "assigned-owner")]
@@ -154,6 +196,7 @@ public sealed class StartRulesTests : IDisposable
             planId = "plan",
             version = 1,
             requester = "requester",
+            budgetAmount = 7500,
             clientId = "client",
             workflowCode = "B07"
         });
@@ -216,7 +259,8 @@ public sealed class StartRulesTests : IDisposable
         WorkflowCode = "B07",
         PlanId = "sunny-soda",
         Version = 3,
-        Requester = "requester"
+        Requester = "requester",
+        BudgetAmount = 7500
     };
 
     private static List<(ApprovalChainRequest, IReadOnlyDictionary<string, string>)> Capture(Mock<DurableTaskClient> client)

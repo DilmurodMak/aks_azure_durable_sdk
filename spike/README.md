@@ -1,7 +1,7 @@
 ---
 title: Approval spike demo
 description: Use HTTP requests and dashboards to test the local emulator or the worker deployed to AKS.
-ms.date: 2026-11-15
+ms.date: 2026-11-17
 ms.topic: how-to
 ---
 
@@ -117,17 +117,17 @@ Switching shell settings does not change an already-running process.
 
 ## What to check
 
-| Test                                               | Expected business result                                      |
-| -------------------------------------------------- | ------------------------------------------------------------- |
-| Valid approval                                     | `Approved`, version 3, receipt `sunny-soda:v3:approved`       |
-| Explicit rejection                                 | `Rejected` with the comment; the other waiting reviewers are `Canceled`, later stages never start, no receipt |
-| Return for changes                                 | `Returned` with the comment; ends the chain like a rejection  |
-| No decision before the deadline                    | `Timeout`, no receipt; ends the chain                         |
-| Reject or return without a comment                 | Refused with HTTP 400; nothing is sent to the workflow        |
-| Requester holds a required role, or one person in two stages | Start refused with HTTP 409; nothing is scheduled   |
-| Wrong actor, self-approval, stale version, or typo | Refused; still waiting on the original timer                  |
-| Replace the waiting worker                         | New pod; the same instance can complete                       |
-| Kill the worker during the delayed apply step      | Receipt attempt on both pods; evidence of possible duplicates |
+| Test                                                         | Expected business result                                                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Valid approval                                               | `Approved`, version 3, receipt `sunny-soda:v3:approved`                                                       |
+| Explicit rejection                                           | `Rejected` with the comment; the other waiting reviewers are `Canceled`, later stages never start, no receipt |
+| Return for changes                                           | `Returned` with the comment; ends the chain like a rejection                                                  |
+| No decision before the deadline                              | `Timeout`, no receipt; ends the chain                                                                         |
+| Reject or return without a comment                           | Refused with HTTP 400; nothing is sent to the workflow                                                        |
+| Requester holds a required role, or one person in two stages | Start refused with HTTP 409; nothing is scheduled                                                             |
+| Wrong actor, self-approval, stale version, or typo           | Refused; still waiting on the original timer                                                                  |
+| Replace the waiting worker                                   | New pod; the same instance can complete                                                                       |
+| Kill the worker during the delayed apply step                | Receipt attempt on both pods; evidence of possible duplicates                                                 |
 
 `202 Accepted` means a decision event was sent. Runtime `Completed` alone
 does not mean approved: check the returned business result.
@@ -233,8 +233,9 @@ checkpoints inside the chosen business step, not campaign phases.
 The policy is keyed by business step, not by phase or capability, because the analysis reuses
 one step under several capabilities (for example `E09` under five), and a step's chain should
 follow it. One versioned set per client matches the analysis' client configuration registry
-(`CP105`: promote and roll back as a unit, record the version in force). Budget-threshold
-branches, materiality-based re-approval, a mandatory internal first approver, and
+(`CP105`: promote and roll back as a unit, record the version in force).
+Fixed-USD budget-threshold stage routing is now implemented and verified on AKS.
+Generalized branching, materiality-based re-approval, a mandatory internal first approver, and
 effective-dated promotion are not implemented yet and would extend a chain, not this model.
 A production system would read the catalogue from the workflow registry instead of this list.
 
@@ -330,6 +331,13 @@ script clients, approves every step, and records the total time, per-chain times
 
 ## Verified on 2026-11-15
 
+These are historical results. The budget-aware build was verified on
+2026-11-17 with 191 .NET tests, a fresh AKS configuration-only A/B demonstration,
+worker replacement, safety acceptance checks and current Application Insights
+evidence. The [updated findings](./FINDINGS.md#fresh-aks-budget-routing-verification)
+record exact image digests, the tested source fingerprint and rerun instructions
+for both Durable and Temporal.
+
 Code under test: commit `af50e35`. Its source, scripts and infrastructure are exactly what
 was built and deployed; only the documentation changed afterwards. What ran on AKS is
 identified by the worker image
@@ -338,18 +346,18 @@ identified by the worker image
 `appi-durable-spike-7q4pxow7wtuks`. Every run used throwaway policy and identity stores, and
 your saved policies were not touched.
 
-| Check                                                          | Where                  | Result                                          |
-| -------------------------------------------------------------- | ---------------------- | ----------------------------------------------- |
-| 180 automated tests, format, build with no warnings            | Local                  | Pass                                            |
-| `test-policy.sh` and `test-console.sh`                         | Emulator, local worker | Pass (`policy-demo-s1-local`, `console-demo-s1-local`) |
-| `test-policy.sh`                                               | Azure Scheduler, AKS   | Pass at 17:31Z (`policy-demo-final-aks`)        |
-| `test-console.sh`                                              | Azure Scheduler, AKS   | Pass (`console-demo-s1-aks`)                    |
-| `test-approval.sh`: pod replacement, timeout, stale, receipt   | Azure Scheduler, AKS   | Pass; resume 3 s (`approval-s1-aks`)            |
-| `test-inflight.sh`: receipt redelivered on a new pod           | Azure Scheduler, AKS   | Pass (`console-demo-inflight-s1-aks`)           |
-| `test-step-one.sh`: the six-step definition of done            | Azure Scheduler, AKS   | Pass at 14:35Z (`step-one-aks2`)                |
+| Check                                                          | Where                  | Result                                                                                 |
+| -------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| 180 automated tests, format, build with no warnings            | Local                  | Pass                                                                                   |
+| `test-policy.sh` and `test-console.sh`                         | Emulator, local worker | Pass (`policy-demo-s1-local`, `console-demo-s1-local`)                                 |
+| `test-policy.sh`                                               | Azure Scheduler, AKS   | Pass at 17:31Z (`policy-demo-final-aks`)                                               |
+| `test-console.sh`                                              | Azure Scheduler, AKS   | Pass (`console-demo-s1-aks`)                                                           |
+| `test-approval.sh`: pod replacement, timeout, stale, receipt   | Azure Scheduler, AKS   | Pass; resume 3 s (`approval-s1-aks`)                                                   |
+| `test-inflight.sh`: receipt redelivered on a new pod           | Azure Scheduler, AKS   | Pass (`console-demo-inflight-s1-aks`)                                                  |
+| `test-step-one.sh`: the six-step definition of done            | Azure Scheduler, AKS   | Pass at 14:35Z (`step-one-aks2`)                                                       |
 | `test-burst.sh 100 100`: 300 decisions, 400 instances          | Azure Scheduler, AKS   | 100 of 100 `Approved` in 15 s; p50 13 s, p95 14 s, 0 failures (`burst-20261115172259`) |
-| Application Insights trace of one chain                        | Azure                  | `approval-console` and `approval-worker` spans with the business tags in one trace |
-| Azure dashboard page                                           | Browser                | Pending browser sign-in; not counted as passed  |
+| Application Insights trace of one chain                        | Azure                  | `approval-console` and `approval-worker` spans with the business tags in one trace     |
+| Azure dashboard page                                           | Browser                | Pending browser sign-in; not counted as passed                                         |
 
 `step-one-aks1` is a kept failing run: the Application Insights check found nothing because of
 the sampling problem described in [FINDINGS.md](./FINDINGS.md); the other five steps passed.

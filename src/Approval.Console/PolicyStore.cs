@@ -8,9 +8,11 @@ public sealed record PolicyRegistry(ApprovalPolicy[] Policies, ActivePolicy[] Ac
 /// <summary>The chain chosen for one business step, and which rule supplied it (for audit).</summary>
 public sealed record PolicyMatch(ApprovalPolicy Policy, string WorkflowCode, PolicyStage[] Stages, string Source)
 {
-    public ResolvedApprovalPolicy Resolve(string client, string? account, Func<string, string> actorForRole) =>
+    public ResolvedApprovalPolicy Resolve(
+        string client, string? account, Func<string, string> actorForRole, BudgetRouting routing) =>
         new(Policy.Id, client, account, WorkflowCode, Policy.Version,
-            Stages.Select(stage => new ResolvedPolicyStage(stage.Name, stage.TimeoutMinutes,
+            routing.Stages.Where(route => route.Included).Select(route => route.Stage)
+                .Select(stage => new ResolvedPolicyStage(stage.Name, stage.TimeoutMinutes,
                 stage.Roles.Select(role => new ResolvedRole(role, actorForRole(role))).ToArray())).ToArray(),
             Source);
 }
@@ -69,6 +71,7 @@ public sealed class PolicyStore(string path) : IPolicyStore
             : left.Length == right.Length && left.Zip(right).All(pair =>
                 pair.First.Name == pair.Second.Name &&
                 pair.First.TimeoutMinutes == pair.Second.TimeoutMinutes &&
+                pair.First.BudgetGreaterThan == pair.Second.BudgetGreaterThan &&
                 pair.First.Roles.SequenceEqual(pair.Second.Roles));
 
     private static bool SameContent(ApprovalPolicy current, ApprovalPolicy candidate) =>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -9,6 +10,9 @@ from pydantic.alias_generators import to_camel
 Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9-]{1,80}$")]
 Actor = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Timeout = Annotated[float, Field(gt=0, le=1440, allow_inf_nan=False)]
+Money = Annotated[
+    Decimal, Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2, allow_inf_nan=False)
+]
 Outcome = Literal["Approved", "Rejected", "Returned", "Timeout", "Canceled"]
 ENDING = {"Rejected", "Returned", "Timeout"}
 
@@ -23,6 +27,7 @@ class Stage(Model):
     name: Key
     roles: list[Key] = Field(min_length=1, max_length=10)
     timeout_minutes: Timeout = 15
+    budget_greater_than: Money | None = None
 
     @model_validator(mode="after")
     def unique_roles(self) -> Stage:
@@ -45,7 +50,38 @@ class StepOverride(Model):
     @model_validator(mode="after")
     def valid_chain(self) -> StepOverride:
         validate_stages(self.stages)
+        if not any(stage.budget_greater_than is None for stage in self.stages):
+            raise ValueError("A chain needs at least one unconditional stage.")
         return self
+
+
+class StageRoute(Model):
+    stage: Stage
+    included: bool
+    reason: str
+
+
+class BudgetRouting(Model):
+    budget_amount: Money
+    currency: Literal["USD"] = "USD"
+    stages: list[StageRoute]
+
+
+def evaluate_budget(amount: Money, stages: list[Stage]) -> BudgetRouting:
+    routes = []
+    for stage in stages:
+        threshold = stage.budget_greater_than
+        included = threshold is None or amount > threshold
+        reason = "Included: unconditional."
+        if threshold is not None:
+            reason = (
+                f"{'Included' if included else 'Skipped'}: USD {amount} "
+                f"{'>' if included else '<='} USD {threshold}."
+            )
+        routes.append(StageRoute(stage=stage, included=included, reason=reason))
+    if not any(route.included for route in routes):
+        raise ValueError("At least one unconditional approval stage is required.")
+    return BudgetRouting(budget_amount=amount, stages=routes)
 
 
 class PolicyDefinition(Model):
@@ -59,6 +95,8 @@ class PolicyDefinition(Model):
     def valid_definition(self) -> PolicyDefinition:
         if self.default_stages is not None:
             validate_stages(self.default_stages)
+            if not any(stage.budget_greater_than is None for stage in self.default_stages):
+                raise ValueError("A chain needs at least one unconditional stage.")
         if self.default_stages is None and not self.overrides:
             raise ValueError("Provide a default chain or a step override.")
         if len({item.workflow_code for item in self.overrides}) != len(self.overrides):
@@ -127,6 +165,7 @@ class Snapshot(Model):
     version: int = Field(ge=1)
     stages: list[ResolvedStage]
     source: str
+    routing: BudgetRouting
 
     @model_validator(mode="after")
     def valid_chain(self) -> Snapshot:
@@ -145,6 +184,7 @@ class StartRequest(Model):
     plan_id: Key
     version: int = Field(ge=1)
     requester: Actor
+    budget_amount: Money
     correlation_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,80}$")] | None = (
         None
     )

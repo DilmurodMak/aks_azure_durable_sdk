@@ -94,21 +94,27 @@ public sealed class ApprovalChainService(
         ApprovalRules.ValidateCorrelationId(correlationId);
         ApprovalRules.ValidatePlan(request.PlanId, request.Version, request.Requester);
         ApprovalRules.ValidateDelay(request.ApplyDecisionDelaySeconds);
+        decimal budget = request.BudgetAmount ?? throw new ArgumentException("BudgetAmount in USD is required.");
+        ApprovalRules.ValidateBudget(budget);
         PolicyMatch match = await policies.ResolveAsync(
             request.ClientId, request.AccountId, request.WorkflowCode, cancellation);
+        BudgetRouting routing = BudgetRouting.Evaluate(budget, match.Stages);
         Dictionary<string, string> assignments = await identities.ResolveAsync(
-            request.ClientId, request.AccountId, match.Stages.SelectMany(stage => stage.Roles), cancellation);
-        ResolvedApprovalPolicy policy = match.Resolve(request.ClientId, request.AccountId, role => assignments[role]);
+            request.ClientId, request.AccountId,
+            routing.Stages.Where(route => route.Included).SelectMany(route => route.Stage.Roles), cancellation);
+        ResolvedApprovalPolicy policy = match.Resolve(request.ClientId, request.AccountId, role => assignments[role], routing);
         ApprovalRules.ValidateSeparationOfDuties(request.Requester, policy.Stages);
         if (await client.GetInstanceAsync(request.InstanceId, cancellation) is not null)
             throw new InvalidOperationException("Instance already exists. Use a fresh ID.");
         ApprovalChainRequest input = new(request.PlanId, request.Version, request.Requester, correlationId, policy,
-            request.ApplyDecisionDelaySeconds);
+            routing, request.ApplyDecisionDelaySeconds);
         Dictionary<string, string> tags = ApprovalTags.Create(request.ClientId, request.AccountId,
             request.WorkflowCode, request.PlanId, request.Version, request.Requester, correlationId, "console", "chain",
             policy.Id, policy.Version);
         using Activity? span = ApprovalTelemetry.StartSpan("approval.start", tags,
-            ("instanceId", request.InstanceId), ("chainSource", policy.Source));
+            ("instanceId", request.InstanceId), ("chainSource", policy.Source),
+            ("budgetAmount", routing.BudgetAmount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            ("currency", routing.Currency));
         StartOrchestrationOptions options = new StartOrchestrationOptions(request.InstanceId)
         {
             Tags = tags
@@ -122,6 +128,7 @@ public sealed class ApprovalChainService(
             policyId = policy.Id,
             policyVersion = policy.Version,
             source = policy.Source,
+            routing,
             snapshot = policy
         };
     }
@@ -144,6 +151,7 @@ public sealed class ApprovalChainService(
             policyId = input.Policy.Id,
             policyVersion = input.Policy.Version,
             snapshot = input.Policy,
+            routing = input.Routing,
             result = metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed
                 ? metadata.ReadOutputAs<ApprovalChainResult>() : null,
             failure = metadata.FailureDetails?.ErrorMessage

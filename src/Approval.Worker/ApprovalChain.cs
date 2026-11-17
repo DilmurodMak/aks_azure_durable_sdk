@@ -89,6 +89,8 @@ public sealed class ApprovalChain : TaskOrchestrator<ApprovalChainRequest, Appro
     {
         ArgumentNullException.ThrowIfNull(input);
         ApprovalRules.ValidatePlan(input.PlanId, input.Version, input.Requester);
+        ArgumentNullException.ThrowIfNull(input.Routing);
+        ApprovalRules.ValidateBudget(input.Routing.BudgetAmount);
         ApprovalRules.ValidateCorrelationId(input.CorrelationId);
         ApprovalRules.ValidateDelay(input.ApplyDecisionDelaySeconds);
         ApprovalRules.ValidateParentId(instanceId);

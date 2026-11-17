@@ -53,7 +53,7 @@ start() {
     '{id:$id,clientId:$id,baseVersion:0,
       defaultStages:[{name:"finance",roles:["Finance"],timeoutMinutes:$minutes}],overrides:[]}')" > "$evidence/$1.policy.json"
   post /api/workflows "$(jq -nc --arg id "$1" --arg client "$policy_id" \
-    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"requester"}')" \
+    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"requester",budgetAmount:7500}')" \
     > "$evidence/$1.start.json"
   jq -e --arg id "$1" --arg policy "$policy_id" \
     '.instanceId==$id and .policyId==$policy and .policyVersion==1' "$evidence/$1.start.json" >/dev/null

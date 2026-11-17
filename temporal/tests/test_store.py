@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -40,9 +41,82 @@ def test_save_is_immutable_and_unchanged_content_does_not_version(store):
     )
     assert second.version == 2
     assert store.policies().policies[0] == first
-    assert store.resolve("client", None, "B07").version == 2
+    assert store.resolve("client", None, "B07", Decimal("7500")).version == 2
     store.activate("policy", 1)
-    assert store.resolve("client", None, "B07").version == 1
+    assert store.resolve("client", None, "B07", Decimal("7500")).version == 1
+
+
+@pytest.mark.parametrize(
+    ("amount", "included"), [("4999.99", False), ("5000", False), ("5000.01", True), ("7500", True)]
+)
+def test_budget_routing_is_strict_decimal_and_serializes_its_reasons(store, amount, included):
+    store.save(
+        draft(
+            defaultStages=[
+                {"name": "Internal", "roles": ["Legal"]},
+                {"name": "Finance", "roles": ["Finance"], "budgetGreaterThan": "5000"},
+            ]
+        )
+    )
+    snapshot = store.resolve("client", None, "B07", Decimal(amount))
+    assert snapshot.routing.currency == "USD"
+    assert snapshot.routing.budget_amount == Decimal(amount)
+    assert snapshot.routing.stages[0].included
+    assert snapshot.routing.stages[1].included == included
+    assert snapshot.routing.stages[1].stage.budget_greater_than == Decimal("5000")
+    assert (">" if included else "<=") in snapshot.routing.stages[1].reason
+    assert type(snapshot).model_validate_json(snapshot.model_dump_json()) == snapshot
+    assert [s.name for s in snapshot.stages] == (
+        ["Internal", "Finance"] if included else ["Internal"]
+    )
+
+
+def test_threshold_only_edit_versions_and_does_not_mutate_original_route(store):
+    stages = [
+        {"name": "Internal", "roles": ["Legal"]},
+        {"name": "Finance", "roles": ["Finance"], "budgetGreaterThan": "5000"},
+    ]
+    store.save(draft(defaultStages=stages))
+    original = store.resolve("client", None, "B07", Decimal("7500"))
+    changed = [stages[0], {**stages[1], "budgetGreaterThan": "10000"}]
+    second = store.save(draft(baseVersion=1, defaultStages=changed))
+    assert second.version == 2
+    next_run = store.resolve("client", None, "B07", Decimal("7500"))
+    assert original.version == 1 and original.routing.stages[1].included
+    assert next_run.version == 2 and not next_run.routing.stages[1].included
+    assert store.save(draft(baseVersion=2, defaultStages=changed)).version == 2
+
+
+def test_skipped_role_does_not_require_identity_or_participate_in_self_review(store):
+    store.save(
+        draft(
+            defaultStages=[
+                {"name": "Internal", "roles": ["Legal"]},
+                {"name": "Finance", "roles": ["Finance"], "budgetGreaterThan": "10000"},
+            ]
+        )
+    )
+    store.save_identities(SaveIdentities(clientId="client", assignments={"Legal": "legal"}))
+    snapshot = store.resolve("client", None, "B07", Decimal("7500"))
+    ChainInput(planId="plan", version=1, requester="finance", correlationId="corr", policy=snapshot)
+    with pytest.raises(Conflict, match="Finance"):
+        store.resolve("client", None, "B07", Decimal("10000.01"))
+
+
+@pytest.mark.parametrize("threshold", ["-1", "0.001", "NaN", "Infinity", "1000000000000"])
+def test_invalid_thresholds_are_rejected(threshold):
+    with pytest.raises(ValidationError):
+        draft(
+            defaultStages=[
+                {"name": "Internal", "roles": ["Legal"]},
+                {"name": "Finance", "roles": ["Finance"], "budgetGreaterThan": threshold},
+            ]
+        )
+
+
+def test_all_conditional_chain_is_rejected():
+    with pytest.raises(ValidationError, match="unconditional"):
+        draft(defaultStages=[{"name": "Finance", "roles": ["Finance"], "budgetGreaterThan": "0"}])
 
 
 def test_stale_save_and_scope_change_are_conflicts(store):
@@ -59,36 +133,39 @@ def test_default_and_override_narrower_owner_precedence(store):
             overrides=[{"workflowCode": "B07", "stages": [{"name": "special", "roles": ["Legal"]}]}]
         )
     )
-    assert store.resolve("client", None, "B07").source == "client override"
-    assert store.resolve("client", None, "B08").source == "client default"
+    assert store.resolve("client", None, "B07", Decimal("7500")).source == "client override"
+    assert store.resolve("client", None, "B08", Decimal("7500")).source == "client default"
     store.save(draft(id="account", accountId="account"))
-    assert store.resolve("client", "account", "B07").source == "account default"
+    assert store.resolve("client", "account", "B07", Decimal("7500")).source == "account default"
     store.save(draft(id="agency", clientId="agency-default"))
     store.save_identities(
         SaveIdentities(
             clientId="agency-default", assignments={"Finance": "finance", "Legal": "legal"}
         )
     )
-    assert store.resolve("other", None, "B07").source == "agency default"
+    assert store.resolve("other", None, "B07", Decimal("7500")).source == "agency default"
 
 
 def test_identity_edits_do_not_version_or_mutate_a_resolved_snapshot(store):
     store.save(draft())
-    snapshot = store.resolve("client", None, "B07")
+    snapshot = store.resolve("client", None, "B07", Decimal("7500"))
     store.save_identities(
         SaveIdentities(clientId="client", assignments={"Finance": "new-finance", "Legal": "legal"})
     )
     assert snapshot.stages[0].approvals[0].approver == "finance"
-    assert store.resolve("client", None, "B07").stages[0].approvals[0].approver == "new-finance"
+    assert (
+        store.resolve("client", None, "B07", Decimal("7500")).stages[0].approvals[0].approver
+        == "new-finance"
+    )
     assert len(store.policies().policies) == 1
 
 
 def test_missing_identity_or_policy_is_explicit(store):
     with pytest.raises(Conflict, match="No active"):
-        store.resolve("client", None, "B07")
+        store.resolve("client", None, "B07", Decimal("7500"))
     store.save(draft(defaultStages=[{"name": "owner", "roles": ["Owner"]}]))
     with pytest.raises(Conflict, match="Owner"):
-        store.resolve("client", None, "B07")
+        store.resolve("client", None, "B07", Decimal("7500"))
 
 
 @pytest.mark.parametrize("requester", ["finance", "FINANCE"])
@@ -100,7 +177,7 @@ def test_self_review_is_rejected_at_start(store, requester):
             version=1,
             requester=requester,
             correlationId="corr",
-            policy=store.resolve("client", None, "B07"),
+            policy=store.resolve("client", None, "B07", Decimal("7500")),
         )
 
 
@@ -122,7 +199,7 @@ def test_person_in_two_stages_is_rejected(store):
             version=1,
             requester="requester",
             correlationId="corr",
-            policy=store.resolve("client", None, "B07"),
+            policy=store.resolve("client", None, "B07", Decimal("7500")),
         )
 
 

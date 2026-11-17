@@ -38,10 +38,12 @@ public sealed class ConsoleHttpTests
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/workflows")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/workflows/console-test/approvals")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/openapi/v1.json")).StatusCode);
-        var start = new { instanceId = "console-test", planId = "sunny-soda", version = 3, requester = "requester", clientId = "client", workflowCode = "B07" };
+        var start = new { instanceId = "console-test", planId = "sunny-soda", version = 3, requester = "requester", clientId = "client", workflowCode = "B07", budgetAmount = 7500 };
         HttpResponseMessage created = await client.PostAsJsonAsync("/api/workflows", start);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.Equal("/api/workflows/console-test", created.Headers.Location?.OriginalString);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/workflows",
+            new { instanceId = "missing-budget", planId = "plan", version = 1, requester = "requester", clientId = "client", workflowCode = "B07" })).StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/approvals/console-test/decision",
             new { actingAs = "finance", outcome = "Approve", version = 3 })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/approvals/console-test/decision",

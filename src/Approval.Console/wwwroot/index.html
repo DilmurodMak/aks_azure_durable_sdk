@@ -147,6 +147,7 @@
           <label>Business step / workflow<select name="workflowCode" required><option value="">Choose a business step</option></select></label>
           <label>Business plan<input name="planId" value="sunny-soda" required></label>
           <label>Plan version<input name="version" value="3" type="number" min="1" required></label>
+          <label>Submitted plan budget (USD)<input name="budgetAmount" value="7500" type="number" min="0" max="999999999999.99" step="0.01" required></label>
           <label>Requester <span class="optional">who submits the plan</span><select name="requester" id="requester" required><option value="requester">requester (plan owner, not an approver)</option></select></label>
           <label>Workflow instance ID<input name="instanceId" id="chain-instance" required></label>
           <label>Correlation ID <span class="optional">optional, generated if empty</span><input name="correlationId" maxlength="80" placeholder="Generated"></label>

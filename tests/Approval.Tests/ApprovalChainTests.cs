@@ -12,7 +12,7 @@ public sealed class ApprovalChainTests
         [
             new("Review", 15, [new("finance", "assigned-finance"), new("legal", "assigned-legal")]),
             new("Release", 30, [new("owner", "assigned-owner")])
-        ], "client default"), 12);
+        ], "client default"), new BudgetRouting(7500, []), 12);
 
     [Fact]
     public async Task RolesRunInParallelButStagesAreOrderedAndReceiptWaitsForEveryApproval()

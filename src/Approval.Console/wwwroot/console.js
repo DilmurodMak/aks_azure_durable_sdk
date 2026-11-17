@@ -53,9 +53,11 @@ function setStep(select, code) {
 
 const MAX_OVERRIDES = 50;
 const blankStage = () => ({ name: "review", timeoutMinutes: 15, reviewers: [{ role: "" }] });
-const toDraftStage = stage => ({ name: stage.name, timeoutMinutes: stage.timeoutMinutes, reviewers: stage.roles.map(role => ({ role })) });
+const toDraftStage = stage => ({ name: stage.name, timeoutMinutes: stage.timeoutMinutes, budgetGreaterThan: stage.budgetGreaterThan ?? "", reviewers: stage.roles.map(role => ({ role })) });
 const toApiStages = drafts => drafts.map(stage => ({
-  name: stage.name, timeoutMinutes: stage.timeoutMinutes, roles: stage.reviewers.map(reviewer => reviewer.role)
+  name: stage.name, timeoutMinutes: stage.timeoutMinutes,
+  budgetGreaterThan: stage.budgetGreaterThan === "" || stage.budgetGreaterThan == null ? null : stage.budgetGreaterThan,
+  roles: stage.reviewers.map(reviewer => reviewer.role)
 }));
 const policyRoles = policy => [...(policy.defaultStages ?? []), ...policy.overrides.flatMap(item => item.stages)]
   .flatMap(stage => stage.roles);
@@ -164,6 +166,7 @@ function chainDrafts(container) {
   return [...container.querySelectorAll(":scope > .stage-card")].map(card => ({
     name: card.querySelector("[data-field=name]").value.trim(),
     timeoutMinutes: Number(card.querySelector("[data-field=timeout]").value),
+    budgetGreaterThan: card.querySelector("[data-field=budget]").value.trim(),
     reviewers: [...card.querySelectorAll(".reviewer-row")].map(row => ({
       role: row.querySelector("[data-field=role]").value.trim()
     }))
@@ -248,6 +251,11 @@ function renderChain(container, stages, label) {
     fields.className = "stage-fields";
     fields.append(inputField("Stage name", stage.name, "name", `${label} stage ${number} name`),
       inputField("Timeout (minutes)", stage.timeoutMinutes, "timeout", `${label} stage ${number} timeout`, "number"));
+    const budget = inputField("Only when USD budget is greater than (optional)", stage.budgetGreaterThan ?? "",
+      "budget", `${label} stage ${number} budget threshold`, "number");
+    const threshold = budget.querySelector("input");
+    threshold.required = false; threshold.min = "0"; threshold.max = "999999999999.99"; threshold.step = "0.01";
+    fields.append(budget);
     const reviewers = document.createElement("div");
     reviewers.className = "reviewer-list";
     stage.reviewers.forEach((reviewer, reviewerIndex) => {
@@ -750,7 +758,7 @@ function workflowHeader(block) {
   content.append(title, span(`state state-${workflow.runtimeStatus}`, workflow.runtimeStatus), detail,
     button("Pinned policy & result", "info", () => act(async () => {
       showResult(await request(`/api/workflows/${encodeURIComponent(workflow.instanceId)}`), true);
-      message("Workflow progress and its original policy snapshot are shown below.");
+      message("Pinned budget facts, included/skipped stage reasons, policy snapshot and result are shown below.");
     })));
   cell.append(content);
   if (error) {
@@ -912,7 +920,7 @@ async function updateStartHint() {
     const match = await request(`/api/policy-match?${query}`);
     if (token !== startHintToken) return;
     const approvals = match.stages.reduce((count, stage) => count + stage.roles.length, 0);
-    hint.textContent = `${match.workflowCode} will use the ${match.source} chain from ${match.policyId} v${match.policyVersion}: ${match.stages.length} stage(s), ${approvals} approval(s). It is pinned when you start.`;
+    hint.textContent = `${match.workflowCode} selects ${match.source} from ${match.policyId} v${match.policyVersion}: ${match.stages.length} configured stage(s), ${approvals} reviewer(s) before budget routing. USD conditions are evaluated once and pinned at start.`;
   } catch (error) {
     if (token === startHintToken) hint.textContent = `No chain will apply. ${error.message}`;
   }

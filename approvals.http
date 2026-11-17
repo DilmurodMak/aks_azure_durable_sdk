@@ -80,6 +80,7 @@ Content-Type: application/json
   "planId": "sunny-soda",
   "version": 3,
   "requester": "requester",
+  "budgetAmount": 7500,
   "correlationId": "crm-ticket-4711"
 }
 

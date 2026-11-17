@@ -154,7 +154,9 @@ async def save_identities(payload: SaveIdentities, request: Request):
 
 @app.post("/api/workflows", status_code=201)
 async def start(payload: StartRequest, request: Request):
-    snapshot = store(request).resolve(payload.client_id, payload.account_id, payload.workflow_code)
+    snapshot = store(request).resolve(
+        payload.client_id, payload.account_id, payload.workflow_code, payload.budget_amount
+    )
     try:
         resolved = ChainInput(
             plan_id=payload.plan_id,
@@ -173,6 +175,8 @@ async def start(payload: StartRequest, request: Request):
             "approval.account": snapshot.account_id or "",
             "approval.startedBy": resolved.requester,
             "approval.correlationId": resolved.correlation_id,
+            "approval.budgetAmount": str(snapshot.routing.budget_amount),
+            "approval.currency": snapshot.routing.currency,
         },
     ):
         try:
@@ -193,6 +197,7 @@ async def start(payload: StartRequest, request: Request):
         "policyId": snapshot.id,
         "policyVersion": snapshot.version,
         "source": snapshot.source,
+        "routing": snapshot.routing,
         "snapshot": snapshot,
     }
 
@@ -269,6 +274,7 @@ async def status(instance_id: Key, request: Request):
         "runtimeStatus": metadata.status.name if metadata.status else "Unknown",
         "progress": progress,
         "snapshot": original.policy,
+        "routing": original.policy.routing,
         "input": original,
         "result": result,
     }

@@ -10,7 +10,7 @@ ms.topic: how-to
 | Project                                    | Responsibility                                                                                                    |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | [Approval.Worker](Approval.Worker/)        | Hosts the policy-driven `ApprovalChain`, reusable `ApprovalStep` steps, and business activities locally or on AKS |
-| [Approval.Client](Approval.Client/) | SDK decision/status logic shared by the console; CLI commands `decide` and `status` |
+| [Approval.Client](Approval.Client/)        | SDK decision/status logic shared by the console; CLI commands `decide` and `status`                               |
 | [Approval.Contracts](Approval.Contracts/)  | Request/decision/result types, explicit connection settings, and shared JSON options                              |
 | [Approval.Console](Approval.Console/)      | Local Console UI and HTTP endpoints; not deployed to AKS                                                          |
 | [Approval.Tests](../tests/Approval.Tests/) | Workflow, converter, CLI, configuration, and HTTP tests                                                           |
@@ -75,22 +75,29 @@ The AKS webhook supplies the federated token settings; no secrets are committed.
 
 The [HTTP file](../approvals.http) targets the console, **not Scheduler directly**:
 
-| HTTP operation                         | Purpose                                                       |
-| -------------------------------------- | ------------------------------------------------------------- |
-| `GET /api/environment`                 | Confirm local/Azure endpoint and task hub                     |
-| `POST /api/approvals/{id}/decision`    | Send a demo decision; `202` means sent, not approved          |
-| `GET /api/approvals/{id}?history=true` | Read business status and durable history                      |
-| `GET /api/business-steps` | List the hard-coded business workflows (from the analysis) an override may target |
-| `GET /api/policies`                    | List saved versions and active selections                     |
-| `POST /api/policies` | Save a policy set (default chain + step overrides) as a new active version (`201`); unchanged content returns the same version (`200`); an unknown override step returns `400` |
-| `GET /api/policy-match` | Show which chain a workflow started now would use for `clientId`, optional `accountId`, and `workflowCode` |
-| `POST /api/policies/{id}/activate`     | Activate a version for new starts                             |
-| `POST /api/workflows`                  | Start a chain using the matching active policy                |
-| `GET /api/workflows/{id}`              | Read pinned policy, structured progress, and aggregate result |
-| `GET /api/workflows` | List workflow instances for the full approval-plan selector |
-| `GET /api/workflows/{id}/approvals` | Project every pinned step with stage/reviewer rank, state, and allowed actions |
-| `GET /api/demo-identities` | List simulator-only role assignments |
-| `POST /api/demo-identities` | Save simulator role assignments without changing policy versions |
+| HTTP operation                         | Purpose                                                                                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/environment`                 | Confirm local/Azure endpoint and task hub                                                                                                                                      |
+| `POST /api/approvals/{id}/decision`    | Send a demo decision; `202` means sent, not approved                                                                                                                           |
+| `GET /api/approvals/{id}?history=true` | Read business status and durable history                                                                                                                                       |
+| `GET /api/business-steps`              | List the hard-coded business workflows (from the analysis) an override may target                                                                                              |
+| `GET /api/policies`                    | List saved versions and active selections                                                                                                                                      |
+| `POST /api/policies`                   | Save a policy set (default chain + step overrides) as a new active version (`201`); unchanged content returns the same version (`200`); an unknown override step returns `400` |
+| `GET /api/policy-match`                | Show which chain a workflow started now would use for `clientId`, optional `accountId`, and `workflowCode`                                                                     |
+| `POST /api/policies/{id}/activate`     | Activate a version for new starts                                                                                                                                              |
+| `POST /api/workflows`                  | Start a chain using the matching active policy                                                                                                                                 |
+| `GET /api/workflows/{id}`              | Read pinned policy, structured progress, and aggregate result                                                                                                                  |
+| `GET /api/workflows`                   | List workflow instances for the full approval-plan selector                                                                                                                    |
+| `GET /api/workflows/{id}/approvals`    | Project every pinned step with stage/reviewer rank, state, and allowed actions                                                                                                 |
+| `GET /api/demo-identities`             | List simulator-only role assignments                                                                                                                                           |
+| `POST /api/demo-identities`            | Save simulator role assignments without changing policy versions                                                                                                               |
+
+Workflow starts require `budgetAmount` for the submitted plan/version, in fixed
+USD (non-negative, at most two fractional digits). A stage's optional
+`budgetGreaterThan` uses strict `>`; equality skips. Routing is evaluated before
+identity resolution and pinned with the included/skipped reasons.
+See the [fresh AKS budget proof](../spike/FINDINGS.md#fresh-aks-budget-routing-verification)
+for limits, exact images and repeatable commands.
 
 OpenAPI is at `/openapi/v1.json`. POST requests need JSON and
 `X-Approval-Console: spike`; the console accepts only local, same-origin traffic.

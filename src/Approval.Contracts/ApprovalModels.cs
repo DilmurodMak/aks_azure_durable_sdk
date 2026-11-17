@@ -52,6 +52,12 @@ public static class ApprovalRules
 
     public const int MaxCommentLength = 1000;
 
+    public static void ValidateBudget(decimal amount)
+    {
+        if (amount < 0 || amount > 999999999999.99m || decimal.Round(amount, 2) != amount)
+            throw new ArgumentException("USD amounts must be between 0 and 999999999999.99 with at most two decimal places.");
+    }
+
     /// <summary>Why a decision's comment is unacceptable, or null. Rejecting or returning needs a reason.</summary>
     public static string? CommentProblem(string? outcome, string? comment)
     {

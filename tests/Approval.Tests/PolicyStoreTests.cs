@@ -10,6 +10,76 @@ public sealed class PolicyStoreTests : IDisposable
     private string RegistryPath => Path.Combine(directory, "registry.json");
     private PolicyStore Store => new(RegistryPath);
 
+    [Theory]
+    [InlineData("4999.99", false)]
+    [InlineData("5000", false)]
+    [InlineData("5000.01", true)]
+    [InlineData("7500", true)]
+    public void BudgetUsesExactDecimalStrictGreaterThanAndRetainsSkippedReasons(string amount, bool included)
+    {
+        decimal budget = decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture);
+        PolicyStage[] stages = [new("Internal", ["Lead"]), new("Finance", ["Finance"], BudgetGreaterThan: 5000)];
+        BudgetRouting routing = BudgetRouting.Evaluate(budget, stages);
+        Assert.True(routing.Stages[0].Included);
+        Assert.Equal(included, routing.Stages[1].Included);
+        Assert.Equal(budget, routing.BudgetAmount);
+        Assert.Equal("USD", routing.Currency);
+        Assert.Contains(included ? ">" : "<=", routing.Stages[1].Reason);
+        Assert.Equal(5000, routing.Stages[1].Stage.BudgetGreaterThan);
+        BudgetRouting roundTrip = JsonSerializer.Deserialize<BudgetRouting>(JsonSerializer.Serialize(routing))!;
+        Assert.Equal(budget, roundTrip.BudgetAmount);
+        Assert.Equal(routing.Stages[1].Reason, roundTrip.Stages[1].Reason);
+        Assert.Equal(5000, roundTrip.Stages[1].Stage.BudgetGreaterThan);
+    }
+
+    [Fact]
+    public async Task ThresholdOnlyEditsCreateVersionsAndKeepAnExistingRoutePinned()
+    {
+        PolicyStore store = Store;
+        SavePolicyRequest draft = Draft() with
+        {
+            DefaultStages = [new("Internal", ["Lead"]), new("Finance", ["Finance"], BudgetGreaterThan: 5000)]
+        };
+        await store.SaveAsync(draft, default);
+        PolicyMatch first = await store.ResolveAsync("client", null, "B07", default);
+        BudgetRouting original = BudgetRouting.Evaluate(7500, first.Stages);
+        ApprovalPolicy second = await store.SaveAsync(draft with
+        {
+            BaseVersion = 1,
+            DefaultStages = [new("Internal", ["Lead"]), new("Finance", ["Finance"], BudgetGreaterThan: 10000)]
+        }, default);
+        Assert.Equal(2, second.Version);
+        BudgetRouting next = BudgetRouting.Evaluate(7500, (await store.ResolveAsync("client", null, "B07", default)).Stages);
+        Assert.True(original.Stages[1].Included);
+        Assert.False(next.Stages[1].Included);
+        Assert.Equal(1, first.Policy.Version);
+        Assert.Equal(2, (await store.SaveAsync(draft with { BaseVersion = 2, DefaultStages = second.DefaultStages }, default)).Version);
+        Assert.Contains("budgetGreaterThan", await File.ReadAllTextAsync(RegistryPath));
+    }
+
+    [Theory]
+    [InlineData("-0.01")]
+    [InlineData("0.001")]
+    [InlineData("1000000000000")]
+    public async Task InvalidThresholdsAndBudgetsAreRejectedWithoutSaving(string amount)
+    {
+        decimal value = decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Throws<ArgumentException>(() => BudgetRouting.Evaluate(value, [new("Internal", ["Lead"])]));
+        await Assert.ThrowsAsync<ArgumentException>(() => Store.SaveAsync(Draft() with
+        {
+            DefaultStages = [new("Internal", ["Lead"]), new("Finance", ["Finance"], BudgetGreaterThan: value)]
+        }, default));
+    }
+
+    [Fact]
+    public async Task APolicyCannotMakeEveryStageConditional()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => Store.SaveAsync(Draft() with
+        {
+            DefaultStages = [new("Finance", ["Finance"], BudgetGreaterThan: 5000)]
+        }, default));
+    }
+
     [Fact]
     public async Task SaveActivatesNewSnapshotsOnlyAndSelectionCanRestoreAnEarlierVersion()
     {

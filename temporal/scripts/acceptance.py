@@ -108,6 +108,7 @@ async def run(burst_count: int, restart: bool, target: str, base: str) -> None:
                     "planId": "sunny-soda",
                     "version": 3,
                     "requester": "requester",
+                    "budgetAmount": "7500",
                     "correlationId": id,
                 },
             )

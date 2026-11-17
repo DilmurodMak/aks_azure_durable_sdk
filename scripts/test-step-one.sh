@@ -79,7 +79,7 @@ printf '== 1. Start the chain\n'
 post /api/workflows "$(jq -nc --arg id "$run" --arg client "$prefix" --arg account "$account" \
   --arg requester "$requester" --arg correlation "$correlation" \
   '{instanceId:$id,clientId:$client,accountId:$account,workflowCode:"B07",planId:"sunny-soda",version:3,
-    requester:$requester,correlationId:$correlation}')" > "$evidence/start.json"
+    requester:$requester,budgetAmount:7500,correlationId:$correlation}')" > "$evidence/start.json"
 jq -e --arg correlation "$correlation" '.correlationId==$correlation and .source=="account default"' \
   "$evidence/start.json" >/dev/null
 printf 'ok   started %s with correlation %s using the account default chain\n' "$run" "$correlation"

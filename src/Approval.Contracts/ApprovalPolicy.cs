@@ -1,6 +1,33 @@
 namespace Approval.Contracts;
 
-public sealed record PolicyStage(string Name, string[] Roles, double TimeoutMinutes = 15);
+public sealed record PolicyStage(
+    string Name, string[] Roles, double TimeoutMinutes = 15, decimal? BudgetGreaterThan = null);
+
+/// <summary>One pinned USD budget rule evaluation, including stages excluded from execution.</summary>
+public sealed record StageRoute(PolicyStage Stage, bool Included, string Reason);
+
+/// <summary>Facts and decisions evaluated once at submission, for the enclosing plan ID/version.</summary>
+public sealed record BudgetRouting(decimal BudgetAmount, StageRoute[] Stages)
+{
+    public string Currency => "USD";
+
+    public static BudgetRouting Evaluate(decimal amount, PolicyStage[] stages)
+    {
+        ApprovalRules.ValidateBudget(amount);
+        StageRoute[] routes = stages.Select(stage =>
+        {
+            bool included = stage.BudgetGreaterThan is null || amount > stage.BudgetGreaterThan.Value;
+            string reason = stage.BudgetGreaterThan is not { } threshold
+                ? "Included: unconditional."
+                : FormattableString.Invariant(
+                    $"{(included ? "Included" : "Skipped")}: USD {amount} {(included ? ">" : "<=")} USD {threshold}.");
+            return new StageRoute(stage, included, reason);
+        }).ToArray();
+        if (!routes.Any(route => route.Included))
+            throw new ArgumentException("At least one unconditional approval stage is required.");
+        return new(amount, routes);
+    }
+}
 
 /// <summary>A chain used only for one business step. It replaces the default chain for that step.</summary>
 public sealed record StepOverride(string WorkflowCode, PolicyStage[] Stages);
@@ -54,6 +81,8 @@ public sealed record ApprovalPolicy(
     {
         if (stages is null || stages.Length is < 1 or > 10)
             throw new ArgumentException($"{name} needs 1-10 stages.");
+        if (!stages.Any(stage => stage is not null && stage.BudgetGreaterThan is null))
+            throw new ArgumentException($"{name} needs at least one unconditional stage.");
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
         foreach (PolicyStage stage in stages)
         {
@@ -64,6 +93,8 @@ public sealed record ApprovalPolicy(
                 throw new ArgumentException($"{name}: stage names must be unique; each stage needs 1-10 unique roles.");
             if (!double.IsFinite(stage.TimeoutMinutes) || stage.TimeoutMinutes is <= 0 or > 1440)
                 throw new ArgumentException($"{name}: stage timeout must be greater than zero and at most 1440 minutes.");
+            if (stage.BudgetGreaterThan is { } threshold)
+                ApprovalRules.ValidateBudget(threshold);
             foreach (string role in stage.Roles)
             {
                 ValidateKey(role, "Role");
@@ -96,6 +127,7 @@ public sealed record ResolvedApprovalPolicy(
 /// </summary>
 public sealed record ApprovalChainRequest(
     string PlanId, int Version, string Requester, string CorrelationId, ResolvedApprovalPolicy Policy,
+    BudgetRouting Routing,
     int ApplyDecisionDelaySeconds = 0);
 
 public sealed record ApprovalStepContext(

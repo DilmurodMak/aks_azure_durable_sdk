@@ -5,8 +5,8 @@ const comments = new Map(), pending = new Set(), actors = new Map();
 const example = () => ({
   id: "sunny-approvals", clientId: "sunny", accountId: null, baseVersion: 0,
   defaultStages: [
-    { name: "parallel-review", roles: ["Finance", "Legal"], timeoutMinutes: 15 },
-    { name: "lead-approval", roles: ["Lead"], timeoutMinutes: 15 }
+    { name: "Internal", roles: ["Lead"], timeoutMinutes: 15 },
+    { name: "Finance", roles: ["Finance"], timeoutMinutes: 15, budgetGreaterThan: "5000" }
   ], overrides: []
 });
 const node = (tag, text, cls) => { const n = document.createElement(tag); if (text) n.textContent = text; if (cls) n.className = cls; return n; };

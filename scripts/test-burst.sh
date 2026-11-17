@@ -16,7 +16,7 @@ if [ "${1:-}" = --one ]; then
   }
   fail() { printf '%s %s %s\n' "$id" "$1" "$((SECONDS-started))"; exit 0; }
   post /api/workflows "$(jq -nc --arg id "$id" --arg client "$prefix" \
-    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"burst",version:1,requester:"requester"}')" >/dev/null ||
+    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"burst",version:1,requester:"requester",budgetAmount:7500}')" >/dev/null ||
     fail StartFailed
   for stage in 1 2; do
     expected=$((stage == 1 ? 2 : 1))

@@ -29,7 +29,7 @@ policy() {
 }
 start() {
   post /api/workflows "$(jq -nc --arg id "$1" --arg client "$prefix" --arg step "${2:-B07}" \
-    '{instanceId:$id,clientId:$client,workflowCode:$step,planId:"sunny-soda",version:3,requester:"requester"}')" \
+    '{instanceId:$id,clientId:$client,workflowCode:$step,planId:"sunny-soda",version:3,requester:"requester",budgetAmount:7500}')" \
     > "$evidence/$1.start.json"
   jq -e --arg client "$prefix" '(.correlationId|length)>0' "$evidence/$1.start.json" >/dev/null
 }
@@ -103,7 +103,7 @@ sod="$prefix-sod"
 code="$(curl --silent --output "$evidence/sod.json" --write-out '%{http_code}' --max-time 60 \
   --header 'Content-Type: application/json' --header 'X-Approval-Console: spike' \
   --data "$(jq -nc --arg id "$sod" --arg client "$prefix" \
-    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"finance"}')" \
+    '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,requester:"finance",budgetAmount:7500}')" \
   "$base/api/workflows")"
 [ "$code" = 409 ]
 jq -e '.title|test("holds the required role")' "$evidence/sod.json" >/dev/null

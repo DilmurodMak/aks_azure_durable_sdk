@@ -1,7 +1,7 @@
 ---
 title: Durable Task SDK on AKS versus self-hosted Temporal
 description: Initial research comparing the existing approval spike with a proposed self-hosted Temporal and Python implementation on the same AKS cluster.
-ms.date: 2026-11-16
+ms.date: 2026-11-17
 ms.topic: reference
 ---
 
@@ -262,20 +262,21 @@ designer, conditional routing, governance or production-ready publishing.
 [T-DSL]
 
 Our existing [ApprovalChain](./src/Approval.Worker/ApprovalChain.cs) already
-interprets a smaller vocabulary: ordered stages, parallel roles and timeouts.
+interprets a smaller vocabulary: ordered stages, parallel roles, timeouts and
+optional strict-USD budget thresholds.
 It reads an immutable resolved policy snapshot rather than embedding a
 customer's chain in worker code.
 
 ### The business experience versus the current spike
 
-| Business action                  | Durable approval spike today                                                                   | Required layer for either engine                                                               |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Browse a workflow library        | Saved policy/version dropdown, not a governed template catalogue                               | Separate browse-only catalogue with ownership, customer scope and descriptions                 |
-| Copy for a particular customer   | No copy-to-customer operation; a new policy can be entered manually                            | Clone into a new customer-scoped draft with a new ID and a reference to its source             |
-| Edit steps, conditions, routing  | Stage order, roles, parallelism, timeouts and per-business-step overrides; no rule expressions | Validated editor over supported operations and a bounded condition/routing vocabulary          |
-| Save the modification            | Changed content creates an immutable version and immediately activates it                      | Save draft independently of activation; record author, reason and changes                      |
-| Test before activation           | Scripts exercise active policies; no business-facing candidate-version preview                 | Test the exact draft version in an isolated run with safe activity substitutes                 |
-| Activate without an app release  | Already works for the supported chain configuration; new starts get the active snapshot        | Publish/activate only the tested version, with authorization, concurrency control and rollback |
+| Business action                  | Durable approval spike today                                                                                  | Required layer for either engine                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Browse a workflow library        | Saved policy/version dropdown, not a governed template catalogue                                              | Separate browse-only catalogue with ownership, customer scope and descriptions                 |
+| Copy for a particular customer   | No copy-to-customer operation; a new policy can be entered manually                                           | Clone into a new customer-scoped draft with a new ID and a reference to its source             |
+| Edit steps, conditions, routing  | Stage order, roles, parallelism, timeouts, overrides and strict-USD budget thresholds; no general expressions | Validated editor over supported operations and a bounded condition/routing vocabulary          |
+| Save the modification            | Changed content creates an immutable version and immediately activates it                                     | Save draft independently of activation; record author, reason and changes                      |
+| Test before activation           | Scripts exercise active policies; no business-facing candidate-version preview                                | Test the exact draft version in an isolated run with safe activity substitutes                 |
+| Activate without an app release  | Already works for the supported chain configuration; new starts get the active snapshot                       | Publish/activate only the tested version, with authorization, concurrency control and rollback |
 
 Two existing behaviors must change to support this business-user experience:
 [selecting a saved policy](./src/Approval.Console/wwwroot/console.js) activates it,
@@ -284,7 +285,7 @@ Browsing must become read-only and Save draft must be separate from Activate.
 This research changes neither behavior.
 
 The [policy contract](./src/Approval.Contracts/ApprovalPolicy.cs) contains stages,
-roles and timeouts, not arbitrary business conditions. Adding or reordering
+roles, timeouts and optional `budgetGreaterThan`, not arbitrary business conditions. Adding or reordering
 existing review stages is already data-only. A new condition operator or a new
 external integration needs an implementation and deployment before a business
 user can select it.
@@ -791,19 +792,19 @@ must not replace Signals in only one timed baseline.
 
 ### Current findings status
 
-| Dimension                   | Durable evidence                                            | Self-hosted Temporal status                                                           |
-| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Business-rule parity        | Recorded acceptance passes                                  | 29 tests; local Docker acceptance passes                                              |
-| Worker recovery             | Recorded AKS restart passes                                 | Container restart mid-wait passed                                                     |
-| Backend/database recovery   | Not qualified by the current spike                          | Temporal Server restart passed; database restore not tested                           |
-| 100-chain burst             | 15 seconds; 100 Approved, zero failures                     | Local Docker: 18.70 seconds, 100 Approved, zero failures; not a controlled comparison |
-| Replay/debugging workflow   | Mocked tests and history inspection                         | Approved, Rejected and Returned histories replayed                                    |
-| Safe code rollout           | SDK capability documented; not exercised                    | Documented tools; not exercised                                                       |
-| Business template lifecycle | Partial policy editor; no clone/draft/test/publish flow     | Policy editor/version activation; no governed authoring lifecycle                     |
-| Custom execution search     | Dashboard documented; pinned SDK query lacks tag predicates | Typed attributes, combined filters and pagination tested locally                      |
+| Dimension                   | Durable evidence                                            | Self-hosted Temporal status                                                                          |
+| --------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Business-rule parity        | Recorded acceptance passes                                  | 29 tests; local Docker acceptance passes                                                             |
+| Worker recovery             | Recorded AKS restart passes                                 | Container restart mid-wait passed                                                                    |
+| Backend/database recovery   | Not qualified by the current spike                          | Temporal Server restart passed; database restore not tested                                          |
+| 100-chain burst             | 15 seconds; 100 Approved, zero failures                     | Local Docker: 18.70 seconds, 100 Approved, zero failures; not a controlled comparison                |
+| Replay/debugging workflow   | Mocked tests and history inspection                         | Approved, Rejected and Returned histories replayed                                                   |
+| Safe code rollout           | SDK capability documented; not exercised                    | Documented tools; not exercised                                                                      |
+| Business template lifecycle | Partial policy editor; no clone/draft/test/publish flow     | Policy editor/version activation; no governed authoring lifecycle                                    |
+| Custom execution search     | Dashboard documented; pinned SDK query lacks tag predicates | Typed attributes, combined filters and pagination tested locally                                     |
 | Logs and traces             | Application Insights integration tested                     | JSON logs and history; historical local trace test passed; Jaeger now removed, export not configured |
-| Enterprise security/audit   | Still incomplete                                            | Still requires design and implementation                                              |
-| Operating cost/effort       | Managed backend; no complete TCO study                      | Additional responsibilities; not measured                                             |
+| Enterprise security/audit   | Still incomplete                                            | Still requires design and implementation                                                             |
+| Operating cost/effort       | Managed backend; no complete TCO study                      | Additional responsibilities; not measured                                                            |
 
 Keep [the existing requirement findings](./spike/FINDINGS.md) as the application
 coverage baseline. Changing engine does not deliver notifications, delegation,
@@ -843,6 +844,15 @@ from both deployments at the user's request; trace instrumentation remains
 available but there is currently no configured trace exporter.
 
 ## Decision after the spike
+
+The [2026-11-17 budget findings](./spike/FINDINGS.md#fresh-aks-budget-routing-verification)
+now provide fresh AKS evidence for both engines: the same USD 7,500 submission
+requires Finance under policy v1 (>5,000), but skips it for a new v2 run
+(>10,000). Existing runs retain v1. Application state was unchanged across the
+policy switch, and both original runs survived a subsequent worker replacement.
+Durable also has fresh Application Insights evidence; Temporal trace export
+remains unconfigured. This qualifies the routing capability, not a broader
+E8 feature set or a controlled throughput benchmark.
 
 Retain Durable if the same business outcomes are achieved with materially less
 operational effort and the Azure-managed backend fits enterprise constraints.

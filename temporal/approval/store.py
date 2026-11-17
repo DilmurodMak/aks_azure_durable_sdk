@@ -4,6 +4,7 @@ import os
 import tempfile
 import threading
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TypeVar
 
@@ -19,6 +20,7 @@ from approval.models import (
     SaveIdentities,
     SavePolicy,
     Snapshot,
+    evaluate_budget,
 )
 
 T = TypeVar("T", bound=Model)
@@ -140,7 +142,9 @@ class Store:
             self._write("identities.json", result)
             return result
 
-    def resolve(self, client: str, account: str | None, code: str) -> Snapshot:
+    def resolve(
+        self, client: str, account: str | None, code: str, budget_amount: Decimal
+    ) -> Snapshot:
         with self.lock:
             registry = self.policies()
             active = {
@@ -175,6 +179,7 @@ class Store:
                 stages = override.stages if override else policy.default_stages
                 if stages is None:
                     continue
+                routing = evaluate_budget(budget_amount, stages)
                 return Snapshot(
                     id=policy.id,
                     client_id=client,
@@ -182,6 +187,7 @@ class Store:
                     workflow_code=code,
                     version=policy.version,
                     source=f"{level} {'override' if override else 'default'}",
+                    routing=routing,
                     stages=[
                         ResolvedStage(
                             name=stage.name,
@@ -190,7 +196,9 @@ class Store:
                                 Role(role=role, approver=actor_for(role)) for role in stage.roles
                             ],
                         )
-                        for stage in stages
+                        for route in routing.stages
+                        if route.included
+                        for stage in [route.stage]
                     ],
                 )
             raise Conflict("No active policy supplies a default chain or override for this step.")

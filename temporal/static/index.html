@@ -42,6 +42,7 @@
   <section id="policies" hidden>
     <h2>Versioned approval policies</h2>
     <p>Roles only, not people. Save activates an immutable version; running chains keep their original snapshot.</p>
+    <p>Optional <code>budgetGreaterThan</code> uses strict USD comparison; equality skips the stage. Keep at least one stage unconditional. Budgets allow two decimal places.</p>
     <div class="toolbar"><label>Saved version<select id="policy-picker"><option value="">New policy</option></select></label>
       <button id="new-policy">New policy</button><button id="edit-policy" disabled>Edit</button>
       <button id="activate">Activate selected</button></div>
@@ -61,6 +62,7 @@
       <label>Business step<select name="workflowCode" id="step-picker"></select></label>
       <label>Business plan<input name="planId" value="sunny-soda" required></label>
       <label>Plan version<input name="version" type="number" min="1" value="3" required></label>
+      <label>Submitted plan budget (USD)<input name="budgetAmount" type="number" min="0" max="999999999999.99" step="0.01" value="7500" required></label>
       <label>Requester<input name="requester" value="requester" required></label>
       <label>Instance ID<input name="instanceId" id="instance-id" required></label>
       <label>Correlation ID (optional)<input name="correlationId"></label>

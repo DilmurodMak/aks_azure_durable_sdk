@@ -54,7 +54,8 @@ public sealed class DemoIdentityTests : IDisposable
             WorkflowCode = "B07",
             PlanId = "sunny-soda",
             Version = 3,
-            Requester = "requester"
+            Requester = "requester",
+            BudgetAmount = 7500
         };
         await service.StartAsync(request, default);
         byte[] before = await File.ReadAllBytesAsync(Path.Combine(directory, "policies.json"));
@@ -85,7 +86,8 @@ public sealed class DemoIdentityTests : IDisposable
             WorkflowCode = "B07",
             PlanId = "sunny-soda",
             Version = 3,
-            Requester = "requester"
+            Requester = "requester",
+            BudgetAmount = 7500
         }, default));
         client.Verify(item => item.ScheduleNewOrchestrationInstanceAsync(
             It.IsAny<TaskName>(), It.IsAny<object?>(), It.IsAny<StartOrchestrationOptions?>(),

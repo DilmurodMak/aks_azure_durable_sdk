@@ -16,7 +16,7 @@ public sealed class WorkflowApprovalProjectionTests
         [
             new("parallel-review", 15, [new("Finance", "finance"), new("Legal", "legal")]),
             new("sign-off", 15, [new("Client", "client")])
-        ], "client default"));
+        ], "client default"), new BudgetRouting(7500, []));
 
     [Fact]
     public async Task ParallelReviewersAreActionableButFutureStageIsShownBlocked()

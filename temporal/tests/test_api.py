@@ -74,6 +74,27 @@ async def test_environment_reports_deployment_specific_links(http, monkeypatch):
     }
 
 
+@pytest.mark.parametrize("budget", [None, "-0.01", "0.001", "NaN", "Infinity", "1000000000000"])
+async def test_invalid_budget_is_refused_before_scheduling(http, budget):
+    response = await start(http, budgetAmount=budget)
+    assert response.status_code == 400
+
+
+async def test_missing_budget_is_refused_before_scheduling(http):
+    response = await http.post(
+        "/api/workflows",
+        json={
+            "instanceId": "missing-budget",
+            "clientId": "client",
+            "workflowCode": "B07",
+            "planId": "plan",
+            "version": 1,
+            "requester": "requester",
+        },
+    )
+    assert response.status_code == 400
+
+
 async def start(http, **changes):
     return await http.post(
         "/api/workflows",
@@ -84,6 +105,7 @@ async def start(http, **changes):
             "planId": "plan",
             "version": 1,
             "requester": "requester",
+            "budgetAmount": "7500",
             **changes,
         },
     )

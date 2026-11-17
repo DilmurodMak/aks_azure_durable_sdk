@@ -42,7 +42,7 @@ post /api/policies "$(jq -nc --arg id "$policy_id" \
     defaultStages:[{name:"finance",roles:["Finance"],timeoutMinutes:5}],overrides:[]}')" > "$evidence/policy.json"
 post /api/workflows "$(jq -nc --arg id "$instance" --arg client "$policy_id" \
   '{instanceId:$id,clientId:$client,workflowCode:"B07",planId:"sunny-soda",version:3,
-    requester:"requester",applyDecisionDelaySeconds:30}')" > "$evidence/start.json"
+    requester:"requester",budgetAmount:7500,applyDecisionDelaySeconds:30}')" > "$evidence/start.json"
 jq -e --arg id "$instance" --arg policy "$policy_id" \
   '.instanceId==$id and .policyId==$policy and .policyVersion==1' "$evidence/start.json" >/dev/null
 deadline=$((SECONDS+60))

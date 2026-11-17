@@ -78,6 +78,8 @@ public sealed record StartChainRequest
     [Required] public required string PlanId { get; init; }
     [Range(1, int.MaxValue)] public int Version { get; init; }
     [Required] public required string Requester { get; init; }
+    /// <summary>Required submitted-version budget in USD, with at most two decimal places.</summary>
+    [Required] public decimal? BudgetAmount { get; init; }
     [Range(0, 60)] public int ApplyDecisionDelaySeconds { get; init; }
 
     /// <summary>Ties this plan's dashboard entries, traces and logs together. Generated when omitted.</summary>

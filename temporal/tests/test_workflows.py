@@ -35,6 +35,31 @@ def chain(timeout=2) -> ChainInput:
                 "workflowCode": "B07",
                 "version": 1,
                 "source": "client default",
+                "routing": {
+                    "budgetAmount": "7500",
+                    "currency": "USD",
+                    "stages": [
+                        {
+                            "stage": {
+                                "name": "parallel",
+                                "roles": ["Finance", "Legal"],
+                                "timeoutMinutes": timeout,
+                            },
+                            "included": True,
+                            "reason": "Included: unconditional.",
+                        },
+                        {
+                            "stage": {"name": "release", "roles": ["Owner"]},
+                            "included": True,
+                            "reason": "Included: unconditional.",
+                        },
+                        {
+                            "stage": {"name": "final", "roles": ["Lead"]},
+                            "included": True,
+                            "reason": "Included: unconditional.",
+                        },
+                    ],
+                },
                 "stages": [
                     {
                         "name": "parallel",

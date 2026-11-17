@@ -1,7 +1,7 @@
 ---
 title: Self-hosted Temporal approval spike
 description: Run the Python approval chain on Docker Desktop or AKS with PostgreSQL and private browser access.
-ms.date: 2026-11-16
+ms.date: 2026-11-17
 ms.topic: how-to
 ---
 
@@ -167,6 +167,44 @@ Policies and identities live in ignored [`.data/`](./.data/) files, not in the
 Durable stores. Account, then client, then agency-default precedence matches the
 existing spike, including the account-default-versus-client-override trade-off.
 
+## Budget routing verified on AKS
+
+Workflow starts require `budgetAmount` in fixed USD for the submitted plan
+version. An optional stage `budgetGreaterThan` includes that stage only for a
+strictly greater budget; equality skips. Values allow two fractional digits,
+from zero to `999999999999.99`. Every chain needs an unconditional stage.
+
+The starter evaluates the rule once before resolving people and separation of
+duties, then pins the budget, policy version, route and included/skipped reasons.
+The policy JSON example contains unconditional Internal and conditional Finance.
+Skipped-stage reasons are in the returned `routing` and pinned policy/result.
+
+On 2026-11-17, the deployed AKS image
+`acr7q4pxow7wtuks.azurecr.io/temporal-approval@sha256:983f80b41f227410533dfe12bacf9cc75cefe721855b7cd18b5add698a4bc227`
+passed the 7,500-budget demonstration: v1 Finance above 5,000 was included;
+after activating v2 above 10,000, a new run skipped Finance while the original
+run still required it. Worker/console pod identity and deployment state stayed
+unchanged during the configuration switch. The original run then completed
+after a deliberate worker-pod replacement.
+
+49 Python tests passed, including existing safety/replay tests. The final AKS
+acceptance also passed reject/Return, skipped later stages, overrides and
+indexed search. No new distributed-trace evidence is claimed because no
+exporter is configured.
+
+From the repository root, with the AKS console port-forward running:
+
+```bash
+source env/azure.env
+uv run --project temporal python scripts/test-budget-routing.py \
+  --engine temporal --base http://127.0.0.1:5091 --restart
+```
+
+See the [fresh findings](../spike/FINDINGS.md#fresh-aks-budget-routing-verification)
+for actual snapshots, tested revision/fingerprint, both engine images and proof
+that the policy edit needed no deployment. The following earlier results remain
+historical; they do not establish a performance comparison for this new build.
+
 ## Workflow topology and the dashboard
 
 The current parity implementation deliberately matches Durable:
@@ -263,19 +301,19 @@ Without `TEMPORAL_TEST=1`, only unit tests run; integration tests are skipped.
 
 Recorded on 2026-11-16:
 
-| Check                                                   | Result                                                                                           |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Check                                                   | Result                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Unit, API and real-server workflow tests                | 30 passed after the AKS environment-link test was added                                           |
-| Completed history replay                                | Approved, Rejected and Returned parent histories replayed                                        |
-| Policy edit during a wait                               | Original keeps v1; new start uses v2; unchanged save does not version                            |
-| Worker and Temporal Server container restarts mid-wait  | Same approval completed afterward                                                                |
-| Parallel out-of-order approvals, then stage-2 rejection | Rejected with comment; stage 3 never created                                                     |
-| Per-step override and Return                            | Passed                                                                                           |
-| Indexed combined search and pagination                  | Passed                                                                                           |
-| Browser decision flow                                   | Missing-comment warning, rejection record, sibling Canceled and future stage NotStarted verified |
-| Historical trace verification                          | Console/worker correlation passed before Jaeger was removed; trace export is no longer configured |
-| Local 100-chain burst                                   | 100 Approved, 0 failures, 300 decisions, 400 logical executions                                  |
-| Script-observed times                                   | 18.70 s total; p50 17.64 s, p95 18.37 s, max 18.69 s                                             |
+| Completed history replay                                | Approved, Rejected and Returned parent histories replayed                                         |
+| Policy edit during a wait                               | Original keeps v1; new start uses v2; unchanged save does not version                             |
+| Worker and Temporal Server container restarts mid-wait  | Same approval completed afterward                                                                 |
+| Parallel out-of-order approvals, then stage-2 rejection | Rejected with comment; stage 3 never created                                                      |
+| Per-step override and Return                            | Passed                                                                                            |
+| Indexed combined search and pagination                  | Passed                                                                                            |
+| Browser decision flow                                   | Missing-comment warning, rejection record, sibling Canceled and future stage NotStarted verified  |
+| Historical trace verification                           | Console/worker correlation passed before Jaeger was removed; trace export is no longer configured |
+| Local 100-chain burst                                   | 100 Approved, 0 failures, 300 decisions, 400 logical executions                                   |
+| Script-observed times                                   | 18.70 s total; p50 17.64 s, p95 18.37 s, max 18.69 s                                              |
 
 Acceptance evidence: `.build/evidence/acceptance-20261116071206-218f18`.
 The tested application image ID is
@@ -299,7 +337,7 @@ is not an engine performance ranking.
   retention and server/database metrics scraping/alerts remain to be configured.
 * Business policy versioning is implemented. Worker Deployment Versioning,
   safe incompatible code upgrades and live policy migration are not tested.
-* No notifications, delegation, threshold rules, draft publishing, real human
+* No notifications, delegation, generalized conditions, draft publishing, real human
   authentication, external immutable audit store or duplicate-safe business write.
 * Timeout validation retains the same 24-hour ceiling; days-long waits and
   sustained load are not qualified.
